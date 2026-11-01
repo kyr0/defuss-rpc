@@ -1,0 +1,24 @@
+---
+// VERIFIED: the repository's scripts/e2e.mjs reads #endpoint (http://127.0.0.1:63920) and #sum (5) from this page.
+// #region astro-page
+// Server side: the middleware put the RPC server's endpoint into locals.
+const endpoint = Astro.locals.rpcEndpoint;
+// #endregion astro-page
+---
+<html lang="en">
+  <head><meta charset="utf-8"><title>defuss-rpc with Astro</title></head>
+  <body>
+    <p>RPC endpoint: <code id="endpoint">{endpoint}</code></p>
+    <p>2 + 3 = <output id="sum">…</output></p>
+    <script>
+      // #region astro-client
+      import "virtual:defuss-rpc";
+      import { getRpcClient } from "defuss-rpc/client";
+      import type { RpcApi } from "../../api.ts";
+
+      const rpc = await getRpcClient<RpcApi>();
+      document.querySelector("#sum")!.textContent = String(await rpc.MathApi.add(2, 3));
+      // #endregion astro-client
+    </script>
+  </body>
+</html>

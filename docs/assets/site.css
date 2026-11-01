@@ -1,0 +1,60 @@
+/* Page layout and the demo's composition. Colors, radii and shadows come from defuss-shadcn tokens. */
+@layer components {
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; line-height: 1.6; background: var(--background); color: var(--foreground); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+  /* component rules set display, which would otherwise beat the hidden attribute */
+  [hidden] { display: none !important; }
+  .rp-page { overflow-x: clip; }
+  .rp-main { display: flex; flex-direction: column; align-items: center; gap: clamp(4.5rem, 10vw, 8rem); padding-block-end: clamp(4rem, 10vw, 8rem); }
+  .rp-section { width: 100%; max-width: 76rem; padding-inline: 1rem; scroll-margin-top: 5rem; }
+  .rp-icon { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .rp-ext { width: .75em; height: .75em; margin-inline-start: .15em; opacity: .75; }
+  .rp-accent { background: linear-gradient(90deg, var(--chart-1), var(--chart-3)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  :where(.rp-main) :not(pre) > code { font-family: var(--font-mono); font-size: .875em; }
+
+  .rp-hero { width: 100%; padding-block: clamp(4rem, 10vw, 7rem) 0; }
+  .rp-install { max-width: 22rem; margin-inline: auto; }
+  .rp-intro { display: grid; gap: 2rem 2.25rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+    width: 100%; max-width: 64rem; margin: clamp(3.5rem, 9vw, 6rem) auto 0; padding-inline: 1.25rem; text-align: start; }
+  .rp-intro-item { display: flex; flex-direction: column; gap: .5rem; }
+  .rp-intro-icon { display: grid; place-items: center; width: 3.5rem; height: 3.5rem; border-radius: var(--radius-xl); font-size: 1.6rem;
+    background: color-mix(in oklch, var(--chart-2) 22%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--chart-2) 35%, transparent); }
+  .rp-intro h3 { margin: .25rem 0 0; font-size: .9375rem; font-weight: 600; }
+  .rp-intro p { margin: 0; font-size: .875rem; color: var(--muted-foreground); text-wrap: pretty; }
+
+  .rp-connection { margin-block: 2rem 1.5rem; }
+  .rp-connection-row { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
+  .rp-connection-row .input { flex: 1 1 16rem; min-width: 0; font-family: var(--font-mono); }
+  .rp-offline { margin: 0 1.5rem 1.5rem; }
+  .rp-demo-grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr)); }
+  .rp-stack { display: flex; flex-direction: column; gap: .9rem; }
+  .rp-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+  .rp-row .input { flex: 1 1 6rem; min-width: 0; }
+  .rp-result { font-family: var(--font-mono); font-weight: 600; min-width: 4ch; }
+  .rp-stream { min-height: 3.2em; margin: 0; font-size: 1.05rem; }
+  .rp-stream span { animation: rp-in .25s ease-out; }
+  @keyframes rp-in { from { opacity: 0; transform: translateY(.2em); } }
+  .rp-muted { margin: 0; font-size: .8125rem; color: var(--muted-foreground); }
+  .rp-error { margin: 0; color: var(--destructive); font-size: .875rem; }
+  .rp-types td:last-child { font-family: var(--font-mono); font-size: .8125rem; overflow-wrap: anywhere; }
+  .rp-drop { display: flex; align-items: center; gap: .75rem; padding: 1rem; border: 1px dashed var(--border); border-radius: var(--radius-lg); cursor: pointer; font-size: .875rem; }
+  .rp-drop input { flex: 1; min-width: 0; font-size: .8125rem; }
+  .rp-progress { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: .4rem .75rem; }
+  .rp-facts { display: grid; grid-template-columns: auto 1fr; gap: .3rem .9rem; margin: 0; font-size: .8125rem; }
+  .rp-facts dt { color: var(--muted-foreground); }
+  .rp-facts dd { margin: 0; overflow-wrap: anywhere; }
+  .rp-preview { max-width: 100%; border-radius: var(--radius-lg); background: var(--muted); }
+
+  .rp-code { margin-block-start: 2.5rem; }
+  .rp-code-title { margin: 0 0 .75rem; font-size: 1rem; }
+  .rp-steps { margin-block-start: 2rem; }
+  .rp-steps .mk-process-step-body { min-width: 0; }
+  .rp-pair { display: grid; gap: 1.25rem; margin-block-start: 1.5rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr)); align-items: start; }
+  .rp-pair > .mk-code-block, .rp-steps .mk-code-block, .rp-code .mk-code-block { margin: 0; min-width: 0; }
+  .mk-code-block code > span { white-space: pre-wrap; overflow-wrap: anywhere; }
+  /* a blank source line is an empty span; without content it would take no height and the line would vanish */
+  .mk-code-block code > span:empty::before { content: " "; }
+  .rp-note { max-width: 50rem; margin: 1rem 0 0; color: var(--muted-foreground); font-size: .875rem; }
+  .rp-table { margin-block-start: 1.5rem; }
+  .rp-table caption { text-align: start; margin-block-end: .5rem; font-weight: 600; }
+}

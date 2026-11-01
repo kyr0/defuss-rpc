@@ -1,0 +1,349 @@
+/**
+ * Shared type definitions of the client and the server.
+ *
+ * Why a declaration file: both entries re-export these types, and none of them carries runtime code, so the client
+ * bundle stays free of server code and the server never imports the client.
+ */
+
+/**
+ * A class constructor used as an RPC namespace. The server creates a fresh instance for every call, so instance
+ * fields never leak state between requests or users.
+ */
+export type RpcApiClass = new (...args: unknown[]) => unknown;
+
+/** A plain object whose values are functions: a module-style RPC namespace, shared by every call. */
+export type RpcApiModule = Record<string, (...args: any[]) => any>;
+
+/** A namespace entry can be either a class constructor or a plain object with functions. */
+export type RpcApiEntry = RpcApiClass | RpcApiModule;
+
+/**
+ * Descriptor of one method in the RPC schema. The client builds a streaming caller for `generator: true` and a
+ * single-response caller otherwise, and the server streams exactly when this flag is set, so both sides agree.
+ */
+export interface RpcMethodDescriptor {
+	/** `true` for `async function` and `async function*`. */
+	async: boolean;
+	/** `true` for `function*` and `async function*`: the call returns NDJSON frames. */
+	generator: boolean;
+}
+
+/** Schema descriptor of a class-based RPC namespace, one entry of the array served at `/rpc/schema`. */
+export interface RpcClassSchema {
+	kind: "class";
+	className: string;
+	methods: Record<string, RpcMethodDescriptor>;
+	properties: Record<string, unknown>;
+}
+
+/**
+ * Schema descriptor for a single module-based (plain-object) RPC namespace.
+ * Returned as part of the array from `/rpc/schema`.
+ */
+export interface RpcModuleSchema {
+	kind: "module";
+	moduleName: string;
+	methods: Record<string, RpcMethodDescriptor>;
+}
+
+/**
+ * A single entry in the RPC schema - either a class or a module descriptor.
+ * The full schema is an array of these, serialized as JSON at `/rpc/schema`.
+ */
+export type RpcSchemaEntry = RpcClassSchema | RpcModuleSchema;
+
+/** The full schema returned by `/rpc/schema` - an array of namespace descriptors. */
+export type RpcApiSchema = RpcSchemaEntry[];
+
+/**
+ * The namespace map passed to `createRpcServer()`.
+ * Keys become the namespace identifiers used in RPC calls (i.e. `className`).
+ *
+ * @example
+ * createRpcServer({ UserApi, OrderApi, mathUtils });
+ */
+export interface ApiNamespace {
+	[name: string]: RpcApiEntry;
+}
+
+/**
+ * The request handler behind every endpoint: a Fetch API function from `Request` to `Response`.
+ *
+ * Why its own type instead of Astro's `APIRoute`: the same handler serves Astro routes, `Bun.serve`, `ExpressRpcServer`
+ * and tests, and consumers without Astro must not need Astro's types. Astro's `APIContext` has a
+ * `request`, so `rpcRoute` is assignable to `APIRoute` as it is.
+ */
+export type RpcRoute = (context: { request: Request }) => Promise<Response>;
+
+/**
+ * Wire format of a single RPC call sent from client to server as the POST body of `/rpc`.
+ */
+export interface RpcCallDescriptor {
+	/**
+	 * Optional request ID - reserved for future request-correlation and deduplication.
+	 * Not currently consumed by `rpcRoute`.
+	 */
+	id?: string | number;
+	/**
+	 * Optional Unix millisecond timestamp of when the call was initiated on the client.
+	 * Establishes implicit call order when multiple concurrent requests are in flight.
+	 */
+	ts?: number;
+	/** The registered namespace name (class name or module name). */
+	className: string;
+	/** The method or function name to invoke on the namespace. */
+	methodName: string;
+	/** Positional argument list, serialized as a JSON array. */
+	args: unknown[];
+}
+
+// hooks
+
+/**
+ * Lifecycle phase for server-side hooks.
+ *
+ * - `"guard"` - runs **before** the method is invoked. Return `false` to reject with HTTP 403.
+ *   Returning `void`/`undefined` is treated as allowed.
+ * - `"result"` - runs **after** the method returns successfully, before the response is sent.
+ *   Return value is ignored; use for logging, auditing, or side-effects. It does not run for generator methods
+ *   (their values are streamed) and runs with `undefined` after an upload handler threw.
+ *
+ * Why only an explicit `false` rejects: a guard written as a logging side effect returns `undefined` and must not
+ * lock everyone out by accident. The client side is strict instead, see {@link ClientHookPhase}.
+ */
+export type ServerHookPhase = "guard" | "result";
+
+/**
+ * A server-side hook function.
+ *
+ * - In `"guard"` phase: returning `false` blocks the call (HTTP 403). Any other return value
+ *   (`true`, `void`, `undefined`) allows the call through.
+ * - In `"result"` phase: return value is ignored; use for logging, auditing, or side-effects.
+ *
+ * @param className  - The namespace name (RPC class or module).
+ * @param methodName - The method/function being called.
+ * @param args       - The positional argument list.
+ * @param request    - The raw Fetch API `Request` object.
+ * @param result     - The return value of the method (only populated in `"result"` phase).
+ */
+export type ServerHookFn = (
+	className: string,
+	methodName: string,
+	args: unknown[],
+	request: Request,
+	result?: unknown,
+) => boolean | Promise<boolean> | void | Promise<void>;
+
+export type ServerHook = {
+	fn: ServerHookFn;
+	phase: ServerHookPhase;
+};
+
+/**
+ * Lifecycle phase for client-side hooks.
+ *
+ * - `"guard"` - runs **before** the fetch is dispatched. Any value but a truthy one, `undefined` included,
+ *   aborts the call with an Error, so a guard must return `true` to let it through.
+ *   VERIFIED: src/client.test.ts ("a guard that does not return true blocks the call before it is sent").
+ * - `"response"` - runs **after** the raw HTTP `Response` arrives, before DSON deserialization.
+ *   Useful for logging, metrics, or reading raw response headers/status.
+ * - `"result"` - runs **after** the response body has been DSON-deserialized. Use for result
+ *   logging or side-effects. `data` is populated with the final return value.
+ */
+export type ClientHookPhase = "guard" | "response" | "result";
+
+/**
+ * A client-side hook function.
+ *
+ * - In `"guard"` phase: return falsy to throw and abort the call.
+ * - In `"response"` phase: `response` is populated; `data` is `undefined`.
+ * - In `"result"` phase: both `response` and `data` are populated.
+ *
+ * @param className  - The namespace name.
+ * @param methodName - The method/function being called.
+ * @param args       - The positional argument list.
+ * @param request    - The `RequestInit` used for the fetch (headers, body, etc.).
+ * @param response   - The raw `Response` (populated in `"response"` and `"result"` phases).
+ * @param data       - The deserialized result (only in `"result"` phase).
+ */
+export type ClientHookFn = (
+	className: string,
+	methodName: string,
+	args: unknown[],
+	request?: RequestInit,
+	response?: Response,
+	data?: unknown,
+) => boolean | Promise<boolean> | void | Promise<void>;
+
+export type ClientHook = {
+	fn: ClientHookFn;
+	phase: ClientHookPhase;
+};
+
+/**
+ * A single NDJSON frame sent by the server when an RPC method returns a generator.
+ *
+ * - `yield`  - one yielded value (non-terminal).
+ * - `return` - the generator's return value (terminal, stream ends after this).
+ * - `error`  - an error thrown during iteration (terminal).
+ */
+export type DsonStreamFrame =
+	| { type: "yield"; value: unknown }
+	| { type: "return"; value: unknown }
+	| { type: "error"; error: { message: string; stack?: string } };
+
+// -- Upload API types ---------------------------------------------------------
+
+/**
+ * Metadata passed to upload handler functions after the upload body has been received.
+ */
+export interface UploadMeta {
+	/** Unique upload identifier (client-generated or auto-assigned). */
+	uploadId: string;
+	/** The registered handler name (e.g. `"vfs-upload"`). */
+	handlerName: string;
+	/** Total expected size in bytes (from `X-Original-Size` header). */
+	originalSize: number;
+	/** Actual bytes received (after decompression). */
+	bytesReceived: number;
+	/** SHA-256 hex digest of the full received content. */
+	sha256: string;
+	/** Server-side processing duration in milliseconds. */
+	durationMs: number;
+	/** Content-Encoding used for the transfer (`"identity"`, `"gzip"`, etc.). */
+	contentEncoding: string;
+	/** Byte offset this upload started from (0 for fresh, >0 for resumed). */
+	offset: number;
+	/** Original filename from the client (from `X-Original-Filename` header). */
+	originalFilename: string;
+}
+
+/**
+ * A buffered upload handler - receives the complete upload as a `Uint8Array`.
+ * Suitable for small-to-medium files that fit comfortably in memory.
+ */
+export type UploadHandlerFn<T = unknown> = (
+	data: Uint8Array,
+	meta: UploadMeta,
+) => T | Promise<T>;
+
+/**
+ * A streaming upload handler: receives a `ReadableStream<Uint8Array>` of the upload, read from the server's temp
+ * file in 256 KiB chunks, so files larger than memory can be processed.
+ *
+ * It runs after the whole body arrived and was hashed (`meta.sha256` is final), and the stream always starts at
+ * byte 0, also for resumed uploads.
+ */
+export type UploadStreamHandlerFn<T = unknown> = (
+	stream: ReadableStream<Uint8Array>,
+	meta: UploadMeta,
+) => T | Promise<T>;
+
+/**
+ * NDJSON frame sent by the server in the upload response body.
+ *
+ * - `received` - upload body fully consumed; contains hash digests and byte count.
+ * - `result`   - the upload handler's return value (DSON-serialized).
+ * - `error`    - the upload handler threw during execution.
+ */
+export type UploadStreamFrame =
+	| {
+		type: "received";
+		uploadId: string;
+		bytesReceived: number;
+		sha256: string;
+		durationMs: number;
+	}
+	| { type: "result"; value: unknown }
+	| { type: "error"; error: { message: string; stack?: string } };
+
+/**
+ * Server-confirmed progress event pushed via SSE (`GET /rpc/upload/progress/{uploadId}`).
+ */
+export interface UploadProgressEvent {
+	/** Bytes received so far (after decompression). */
+	bytesReceived: number;
+	/** Total expected bytes (from `X-Original-Size`). */
+	totalBytes: number;
+	/** Percentage complete (0-100). */
+	percent: number;
+}
+
+/**
+ * Internal registration entry for an upload handler.
+ * @internal
+ */
+export interface UploadHandlerEntry {
+	fn: UploadHandlerFn<unknown> | UploadStreamHandlerFn<unknown>;
+	mode: "buffered" | "streaming";
+}
+
+// -- Download API types ---------------------------------------------------------
+
+/**
+ * Metadata passed to download handler functions.
+ */
+export interface DownloadMeta {
+	/** Unique download identifier. */
+	downloadId: string;
+	/** The registered handler name (e.g. `"file-download"`). */
+	handlerName: string;
+	/** Optional byte-range start offset for resumable downloads. */
+	rangeStart?: number;
+	/** Optional byte-range end offset for resumable downloads. */
+	rangeEnd?: number;
+}
+
+/**
+ * Metadata returned by download handlers describing the file to send.
+ */
+export interface DownloadFileMeta {
+	/** Total file size in bytes. */
+	size: number;
+	/** MIME content type (e.g. `"application/zip"`). */
+	contentType: string;
+	/** Suggested filename for the browser. */
+	filename?: string;
+	/** SHA-256 hex digest of the file content. */
+	sha256?: string;
+	/** Last-Modified timestamp. */
+	lastModified?: number;
+}
+
+/**
+ * A buffered download handler - returns a `Uint8Array` with the complete file data.
+ * Suitable for small-to-medium files that fit comfortably in memory.
+ */
+export type DownloadHandlerFn<T = unknown> = (
+	meta: DownloadMeta,
+) => (Uint8Array | { data: Uint8Array; fileMeta: DownloadFileMeta }) | Promise<Uint8Array | { data: Uint8Array; fileMeta: DownloadFileMeta }>;
+
+/**
+ * A streaming download handler - returns a `ReadableStream<Uint8Array>` for
+ * real-time streaming of large files without buffering the entire payload.
+ */
+export type DownloadStreamHandlerFn<T = unknown> = (
+	meta: DownloadMeta,
+) => ({ stream: ReadableStream<Uint8Array>; fileMeta: DownloadFileMeta }) | Promise<{ stream: ReadableStream<Uint8Array>; fileMeta: DownloadFileMeta }>;
+
+/**
+ * Reserved for download progress. No endpoint emits it: a download's progress is known to the client from
+ * `Content-Length` and the bytes it has read.
+ */
+export interface DownloadProgressEvent {
+	/** Bytes sent so far. */
+	bytesSent: number;
+	/** Total bytes to send. */
+	totalBytes: number;
+	/** Percentage complete (0-100). */
+	percent: number;
+}
+
+/**
+ * Internal registration entry for a download handler.
+ * @internal
+ */
+export interface DownloadHandlerEntry {
+	fn: DownloadHandlerFn<unknown> | DownloadStreamHandlerFn<unknown>;
+	mode: "buffered" | "streaming";
+}

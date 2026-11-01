@@ -1,0 +1,92 @@
+{
+  "name": "defuss-rpc-astro",
+  "version": "2.0.0",
+  "description": "Astro integration for defuss-rpc: the Vite plugin of defuss-rpc-vite in astro dev, plus Astro.locals.rpcEndpoint for server-rendered code and the server start in production.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Aron Homberg <info@aron-homberg.de>",
+  "homepage": "https://github.com/kyr0/defuss-rpc/tree/main/integrations/astro#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kyr0/defuss-rpc.git",
+    "directory": "integrations/astro"
+  },
+  "bugs": {
+    "url": "https://github.com/kyr0/defuss-rpc/issues"
+  },
+  "keywords": [
+    "defuss-rpc",
+    "rpc",
+    "astro",
+    "astro-integration",
+    "withastro",
+    "bun"
+  ],
+  "packageManager": "bun@1.4.3",
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./middleware": {
+      "import": {
+        "types": "./dist/middleware.d.mts",
+        "default": "./dist/middleware.mjs"
+      },
+      "require": {
+        "types": "./dist/middleware.d.cts",
+        "default": "./dist/middleware.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.mts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "pkgroll --clean-dist",
+    "lint": "oxlint --deny-warnings src example",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p example/tsconfig.json",
+    "test": "vitest run",
+    "test:bun": "bunx --bun vitest run",
+    "prepublishOnly": "cd ../.. && make verify"
+  },
+  "peerDependencies": {
+    "astro": ">=5.0.0",
+    "defuss-rpc": "^2.0.0",
+    "defuss-rpc-vite": "^2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "defuss-rpc": {
+      "optional": true
+    },
+    "defuss-rpc-vite": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^26",
+    "astro": "7.4.4",
+    "oxlint": "1.90.0",
+    "pkgroll": "2.29.0",
+    "typescript": "~5.9.3",
+    "vite": "8.3.5",
+    "vitest": "^5.0.5"
+  }
+}

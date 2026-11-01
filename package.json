@@ -1,0 +1,191 @@
+{
+  "name": "defuss-rpc",
+  "version": "2.0.0",
+  "description": "Type-safe RPC for TypeScript over the Fetch API: classes and modules as APIs, async-generator streaming as NDJSON, DSON types (Date, Map, Set, BigInt, typed arrays), resumable binary uploads with SHA-256 and progress, downloads, hooks, and a standalone server on Bun.serve by default or on a provider of your choice (Express on Node.js and Bun, bunway on Bun); Vite and Astro integrations ship as defuss-rpc-vite and defuss-rpc-astro. The client runs in browsers, Node.js and Bun.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Aron Homberg <info@aron-homberg.de>",
+  "homepage": "https://github.com/kyr0/defuss-rpc#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kyr0/defuss-rpc.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kyr0/defuss-rpc/issues"
+  },
+  "keywords": [
+    "rpc",
+    "defuss",
+    "typescript",
+    "fetch",
+    "streaming",
+    "ndjson",
+    "async-generator",
+    "upload",
+    "download",
+    "dson",
+    "isomorphic",
+    "bun",
+    "express",
+    "bunway"
+  ],
+  "packageManager": "bun@1.4.3",
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "exports": {
+    "./client": {
+      "import": {
+        "types": "./dist/client.d.mts",
+        "default": "./dist/client.mjs"
+      },
+      "require": {
+        "types": "./dist/client.d.cts",
+        "default": "./dist/client.cjs"
+      }
+    },
+    "./client.js": {
+      "import": {
+        "types": "./dist/client.d.mts",
+        "default": "./dist/client.mjs"
+      },
+      "require": {
+        "types": "./dist/client.d.cts",
+        "default": "./dist/client.cjs"
+      }
+    },
+    "./server": {
+      "import": {
+        "types": "./dist/server.d.mts",
+        "default": "./dist/server.mjs"
+      },
+      "require": {
+        "types": "./dist/server.d.cts",
+        "default": "./dist/server.cjs"
+      }
+    },
+    "./server.js": {
+      "import": {
+        "types": "./dist/server.d.mts",
+        "default": "./dist/server.mjs"
+      },
+      "require": {
+        "types": "./dist/server.d.cts",
+        "default": "./dist/server.cjs"
+      }
+    },
+    "./express-server": {
+      "import": {
+        "types": "./dist/express-server.d.mts",
+        "default": "./dist/express-server.mjs"
+      },
+      "require": {
+        "types": "./dist/express-server.d.cts",
+        "default": "./dist/express-server.cjs"
+      }
+    },
+    "./express-server.js": {
+      "import": {
+        "types": "./dist/express-server.d.mts",
+        "default": "./dist/express-server.mjs"
+      },
+      "require": {
+        "types": "./dist/express-server.d.cts",
+        "default": "./dist/express-server.cjs"
+      }
+    },
+    "./providers/express": {
+      "import": {
+        "types": "./dist/providers/express.d.mts",
+        "default": "./dist/providers/express.mjs"
+      },
+      "require": {
+        "types": "./dist/providers/express.d.cts",
+        "default": "./dist/providers/express.cjs"
+      }
+    },
+    "./providers/express.js": {
+      "import": {
+        "types": "./dist/providers/express.d.mts",
+        "default": "./dist/providers/express.mjs"
+      },
+      "require": {
+        "types": "./dist/providers/express.d.cts",
+        "default": "./dist/providers/express.cjs"
+      }
+    },
+    "./providers/bunway": {
+      "import": {
+        "types": "./dist/providers/bunway.d.mts",
+        "default": "./dist/providers/bunway.mjs"
+      }
+    },
+    "./providers/bunway.js": {
+      "import": {
+        "types": "./dist/providers/bunway.d.mts",
+        "default": "./dist/providers/bunway.mjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/types.d.mts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "clean": "rm -rf ./dist ./coverage ./node_modules/.vite",
+    "build": "pkgroll --clean-dist",
+    "lint": "oxlint --deny-warnings src scripts examples docs/src",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc -p examples/tsconfig.json",
+    "test": "vitest run",
+    "test:bun": "bunx --bun vitest run --project node",
+    "coverage": "vitest run --coverage --project node --project chromium",
+    "docs": "bun scripts/docs.ts",
+    "e2e": "node scripts/e2e.mjs",
+    "bench": "node scripts/bench.mjs",
+    "prepublishOnly": "make verify"
+  },
+  "dependencies": {
+    "defuss-dson": "^1.1.2"
+  },
+  "peerDependencies": {
+    "@types/express": ">=5.0.0",
+    "bunway": ">=1.1.0",
+    "express": ">=5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@types/express": {
+      "optional": true
+    },
+    "bunway": {
+      "optional": true
+    },
+    "express": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "@types/express": "5.0.6",
+    "@types/node": "^26",
+    "@vitest/browser": "^5.0.5",
+    "@vitest/browser-playwright": "^5.0.5",
+    "@vitest/coverage-v8": "^5.0.5",
+    "autocannon": "8.0.0",
+    "bunway": "1.1.0",
+    "express": "5.3.0",
+    "oxlint": "1.90.0",
+    "pkgroll": "2.29.0",
+    "playwright": "1.64.1",
+    "shiki": "4.5.0",
+    "typescript": "~5.9.3",
+    "vite": "8.3.5",
+    "vitest": "^5.0.5"
+  }
+}

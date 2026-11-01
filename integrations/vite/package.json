@@ -1,0 +1,86 @@
+{
+  "name": "defuss-rpc-vite",
+  "version": "2.0.0",
+  "description": "Vite plugin for defuss-rpc: starts the RPC server beside vite dev (Bun.serve by default, port 63920) and gives the client its endpoint through virtual:defuss-rpc.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Aron Homberg <info@aron-homberg.de>",
+  "homepage": "https://github.com/kyr0/defuss-rpc/tree/main/integrations/vite#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kyr0/defuss-rpc.git",
+    "directory": "integrations/vite"
+  },
+  "bugs": {
+    "url": "https://github.com/kyr0/defuss-rpc/issues"
+  },
+  "keywords": [
+    "defuss-rpc",
+    "rpc",
+    "vite",
+    "vite-plugin",
+    "bun"
+  ],
+  "packageManager": "bun@1.4.3",
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./rpc-state": {
+      "import": {
+        "types": "./dist/rpc-state.d.mts",
+        "default": "./dist/rpc-state.mjs"
+      },
+      "require": {
+        "types": "./dist/rpc-state.d.cts",
+        "default": "./dist/rpc-state.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.mts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "pkgroll --clean-dist",
+    "lint": "oxlint --deny-warnings src example",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p example/tsconfig.json",
+    "test": "vitest run",
+    "test:bun": "bunx --bun vitest run",
+    "prepublishOnly": "cd ../.. && make verify"
+  },
+  "peerDependencies": {
+    "defuss-rpc": "^2.0.0",
+    "vite": ">=5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "defuss-rpc": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^26",
+    "oxlint": "1.90.0",
+    "pkgroll": "2.29.0",
+    "typescript": "~5.9.3",
+    "vite": "8.3.5",
+    "vitest": "^5.0.5"
+  }
+}

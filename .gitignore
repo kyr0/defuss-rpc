@@ -1,0 +1,19 @@
+.env
+var/*
+tmp/*
+output/*
+input/*
+.DS_Store
+dist/
+.vae/SWARM_STATUS.yaml
+node_modules/
+coverage/
+.cache/
+*.tgz
+.vitest/
+__pycache__/
+# Astro's generated types and dev lock of the example
+integrations/astro/example/.astro/
+# Superseded: adapted into examples/ and docs/; the originals live in the kyr0/defuss monorepo
+feat-old-*/
+.claude/settings.local.json
