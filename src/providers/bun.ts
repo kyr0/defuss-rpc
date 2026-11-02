@@ -1,9 +1,9 @@
 /**
  * The default provider: `Bun.serve` without a framework, which `ExpressRpcServer` uses when no `provider` is given.
  *
- * Why it is the default: it needs no framework package, and it answered the most small calls of every server setup.
- * VERIFIED: `make bench` on 2026-11-01 (README.md, section Benchmark), 25,112 calls per second against bunway's
- * 20,616, inside that run's noise. Why there is no Node.js default:
+ * Why it is the default: it needs no framework package, and it answered the most small calls of every
+ * `ExpressRpcServer` setup. VERIFIED: two `make bench` runs on 2026-11-02 (README.md, section Benchmark), 63,926 and
+ * 64,195 calls per second against bunway's 53,315 and 52,784. Why there is no Node.js default:
  * the alternative, Express, would have to be imported, so the server would load a framework the application never
  * chose, and what runs would depend on what happens to be installed; on Node.js the constructor throws instead and
  * names `expressProvider()`.
