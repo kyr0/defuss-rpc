@@ -517,7 +517,6 @@ Their READMEs show the client side and list the options.
 | express on Bun | 41,437 | 1 / 3 | 10,426 | 1497 MiB/s | 8466.4 MiB/s | 46 / 163 / 343 MiB |
 | bunway on Bun | 53,315 | 1 / 2 | 11,738 | 1603.8 MiB/s | 8403.6 MiB/s | 38 / 70 / 455 MiB |
 | no provider (Bun.serve) on Bun | 63,926 | 0 / 2 | 12,206 | 1626.2 MiB/s | 8483.6 MiB/s | 29 / 59 / 421 MiB |
-| bare rpcRoute in Bun.serve on Bun | 123,821 | 0 / 1 | 13,625 | 1656.6 MiB/s | 8700 MiB/s | 29 / 68 / 414 MiB |
 
 Measured 2026-11-02T05:14:14.247Z on Apple M5 Max, 18 cores, 48 GiB, darwin arm64; Node.js v26.11.1, Bun 1.4.3; 5 s per scenario after 1 s warm-up, 64 connections (uploads and downloads 16), autocannon with 4 worker threads on the same machine (load average 6.3 before the run). RSS is the server process's resident set size from `ps`: idle after start, the peak under the call load, and the peak over all four scenarios.
 
@@ -526,7 +525,6 @@ What the numbers show, in this run and in a second one right before it (load ave
 - It also needed the least memory in both runs: 29 MiB idle and 59 MiB under the call load, against 38 and 70 MiB for bunway, 45 to 46 and 163 MiB for Express on Bun, and 98 and 243 MiB for Express on Node.js.
 - For streams the default led bunway by 4 to 5 percent in both runs (12,206 and 12,113 against 11,738 and 11,545 per second). Every server moved 1.2 to 1.6 GiB/s up and 8.2 to 8.6 GiB/s down; of the `ExpressRpcServer` setups, Express on Node.js downloaded fastest in both runs, 1 to 3 percent ahead of the default.
 - The peak memory while moving files (16 connections, 1 MiB uploads and 8 MiB downloads) was 340 to 460 MiB for every server and did not rank the same in both runs; Express on Bun had the lowest peak in both (343 MiB).
-- `rpcRoute` in a bare `Bun.serve` answered 1.9 times as many small calls as `ExpressRpcServer` without a provider (123,821 against 63,926; 123,002 against 64,195), with the same idle memory. That gap is what `ExpressRpcServer` adds on top: CORS, routing, body reading and the size limit.
 - The load average was 6.3 and 4.4 before the two runs; compare rows of one run, not runs of different machines.
 
 `make bench` measures this on your machine: `scripts/bench.mjs` starts each server in its own process and loads it with [autocannon](https://github.com/mcollina/autocannon) for 5 s per scenario (`BENCH_DURATION`), after checking one answer of each. Compare rows of one run; the load generator shares the machine with the server.

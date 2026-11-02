@@ -57,7 +57,7 @@ What the bridge does for `node:http`:
 
 The bunway provider calls `Bun.serve` itself instead of bunway's `listen()`, because Bun closes connections that send nothing for 10 s, and a stream can be quiet longer. The provider lifts that limit for NDJSON and Server-Sent Events responses only (`server.timeout(request, 0)`). bunway's WebSocket routes therefore need bunway's own `listen()`.
 
-`scripts/bench.mjs` (`make bench`) compares the providers and `rpcRoute` on bare `Bun.serve`; README.md has the latest numbers.
+`scripts/bench.mjs` (`make bench`) compares the providers; README.md has the latest numbers. It also measures `rpcRoute` in a bare `Bun.serve`, which README.md and the website leave out of their tables: it runs without CORS, a body limit or the content-type check, so its numbers do not compare with a server that has them. It is the baseline for what the default provider's fetch handler and `http-core.ts` cost, the only code between the two setups (VERIFIED: 1.9 times the default's calls per second in both runs of 2026-11-02, 123,821 against 63,926 and 123,002 against 64,195, with the same 29 MiB idle).
 
 Why one fixed default port (63920) instead of `0`: a client in another process finds a server that nobody configured. 63920 is in the dynamic range (49152 to 65535), which IANA never assigns to a service. A fixed port needs one fix that `0` hid, in the Vite plugin: Vite creates a restarted dev server before it closes the old one (integrations/vite/ARCH.md).
 
