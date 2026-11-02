@@ -237,11 +237,11 @@
       <div class="mk-section-header-copy">
         <div class="rp-badges"><span class="badge rp-eyebrow" data-variant="secondary"><svg class="rp-icon" aria-hidden="true"><use href="#i-gauge"/></svg>Performance</span></div>
         <h2 class="mk-section-header-title" id="performance-title">Stay on the default</h2>
-        <p class="mk-section-header-desc">Of every <code>ExpressRpcServer</code> setup, the default on <code>Bun.serve</code> answered the most small calls and needed the least memory, idle and under load, in two runs of <code>make bench</code>. Choose a provider for Node.js or for a framework's middleware, not for speed.</p>
+        <p class="mk-section-header-desc">Of every <code>ExpressRpcServer</code> setup, the default on <code>Bun.serve</code> answered the most small calls and needed the least memory, idle and under load, in <code>make bench</code>. Choose a provider for Node.js or for a framework's middleware, not for speed.</p>
       </div>
     </header>
     <ul class="mk-stats-grid rp-stats" data-variant="cards" role="list">
-      <li class="mk-stat"><span class="mk-stat-value">63,926</span><span class="mk-stat-label">calls per second on the default (64,195 in run 1). bunway: 53,315. Express on Node.js: 32,784.</span></li>
+      <li class="mk-stat"><span class="mk-stat-value">63,926</span><span class="mk-stat-label">calls per second on the default. bunway: 53,315. Express on Node.js: 32,784.</span></li>
       <li class="mk-stat"><span class="mk-stat-value">0 / 2 ms</span><span class="mk-stat-label">call latency, p50 / p99. bunway: 1&nbsp;/&nbsp;2. Express on Node.js: 1&nbsp;/&nbsp;3.</span></li>
       <li class="mk-stat"><span class="mk-stat-value">29 MiB</span><span class="mk-stat-label">memory (RSS) of the idle server. bunway: 38. Express on Node.js: 98.</span></li>
       <li class="mk-stat"><span class="mk-stat-value">59 MiB</span><span class="mk-stat-label">memory under small calls. bunway: 70. Express on Node.js: 243.</span></li>
@@ -256,12 +256,12 @@
       <div class="table-container rp-scroll">
       <table class="table">
         <caption class="sr-only">Small calls, streams and the server process's memory (RSS), per server</caption>
-        <thead><tr class="table-row"><th class="table-head" scope="col">Server</th><th class="table-head" scope="col">Runtime</th><th class="table-head" scope="col">calls/s</th><th class="table-head" scope="col">calls/s, run 1</th><th class="table-head" scope="col">p50 / p99 ms</th><th class="table-head" scope="col">streams/s</th><th class="table-head" scope="col">RSS idle</th><th class="table-head" scope="col">RSS under calls</th><th class="table-head" scope="col">RSS peak (files)</th></tr></thead>
+        <thead><tr class="table-row"><th class="table-head" scope="col">Server</th><th class="table-head" scope="col">Runtime</th><th class="table-head" scope="col">calls/s</th><th class="table-head" scope="col">p50 / p99 ms</th><th class="table-head" scope="col">streams/s</th><th class="table-head" scope="col">RSS idle</th><th class="table-head" scope="col">RSS under calls</th><th class="table-head" scope="col">RSS peak (files)</th></tr></thead>
         <tbody>
-          <tr class="table-row rp-best"><th class="table-cell" scope="row">No provider: <code>Bun.serve</code> <span class="badge" data-variant="default" data-size="sm">default</span></th><td class="table-cell">Bun</td><td class="table-cell">63,926</td><td class="table-cell">64,195</td><td class="table-cell">0 / 2</td><td class="table-cell">12,206</td><td class="table-cell">29 MiB</td><td class="table-cell">59 MiB</td><td class="table-cell">421 MiB</td></tr>
-          <tr class="table-row"><th class="table-cell" scope="row"><code>bunwayProvider()</code></th><td class="table-cell">Bun</td><td class="table-cell">53,315</td><td class="table-cell">52,784</td><td class="table-cell">1 / 2</td><td class="table-cell">11,738</td><td class="table-cell">38 MiB</td><td class="table-cell">70 MiB</td><td class="table-cell">455 MiB</td></tr>
-          <tr class="table-row"><th class="table-cell" scope="row"><code>expressProvider()</code></th><td class="table-cell">Bun</td><td class="table-cell">41,437</td><td class="table-cell">41,680</td><td class="table-cell">1 / 3</td><td class="table-cell">10,426</td><td class="table-cell">46 MiB</td><td class="table-cell">163 MiB</td><td class="table-cell">343 MiB</td></tr>
-          <tr class="table-row"><th class="table-cell" scope="row"><code>expressProvider()</code></th><td class="table-cell">Node.js</td><td class="table-cell">32,784</td><td class="table-cell">33,237</td><td class="table-cell">1 / 3</td><td class="table-cell">7,760</td><td class="table-cell">98 MiB</td><td class="table-cell">243 MiB</td><td class="table-cell">433 MiB</td></tr>
+          <tr class="table-row rp-best"><th class="table-cell" scope="row">No provider: <code>Bun.serve</code> <span class="badge" data-variant="default" data-size="sm">default</span></th><td class="table-cell">Bun</td><td class="table-cell">63,926</td><td class="table-cell">0 / 2</td><td class="table-cell">12,206</td><td class="table-cell">29 MiB</td><td class="table-cell">59 MiB</td><td class="table-cell">421 MiB</td></tr>
+          <tr class="table-row"><th class="table-cell" scope="row"><code>bunwayProvider()</code></th><td class="table-cell">Bun</td><td class="table-cell">53,315</td><td class="table-cell">1 / 2</td><td class="table-cell">11,738</td><td class="table-cell">38 MiB</td><td class="table-cell">70 MiB</td><td class="table-cell">455 MiB</td></tr>
+          <tr class="table-row"><th class="table-cell" scope="row"><code>expressProvider()</code></th><td class="table-cell">Bun</td><td class="table-cell">41,437</td><td class="table-cell">1 / 3</td><td class="table-cell">10,426</td><td class="table-cell">46 MiB</td><td class="table-cell">163 MiB</td><td class="table-cell">343 MiB</td></tr>
+          <tr class="table-row"><th class="table-cell" scope="row"><code>expressProvider()</code></th><td class="table-cell">Node.js</td><td class="table-cell">32,784</td><td class="table-cell">1 / 3</td><td class="table-cell">7,760</td><td class="table-cell">98 MiB</td><td class="table-cell">243 MiB</td><td class="table-cell">433 MiB</td></tr>
         </tbody>
       </table>
       </div>
@@ -279,14 +279,14 @@
             <span class="mk-faq-icon" aria-hidden="true"><svg class="rp-icon"><use href="#i-gauge"/></svg></span>
             <div class="mk-faq-text">
               <h4 class="mk-faq-question">How was it measured?</h4>
-              <p class="mk-faq-answer">On 2026-11-02, on an Apple M5 Max with Node.js 26.11 and Bun 1.4.3: 5 s per scenario, 64 connections, autocannon on the same machine at a load average of 4.4 and 6.3 before the two runs. Every column except run 1 comes from run 2.</p>
+              <p class="mk-faq-answer">On an Apple M5 Max with Node.js 26.11 and Bun 1.4.3: 5 s per scenario, 64 connections, autocannon on the same machine at a load average of 6.3.</p>
             </div>
           </article>
           <article class="mk-faq-item">
             <span class="mk-faq-icon" aria-hidden="true"><svg class="rp-icon"><use href="#i-scale"/></svg></span>
             <div class="mk-faq-text">
               <h4 class="mk-faq-question">Where does the default not lead?</h4>
-              <p class="mk-faq-answer">Files: every server moved 1.2 to 1.6 GiB/s up and 8.2 to 8.6 GiB/s down, and Express on Node.js downloaded 1 to 3 percent faster than the default in both runs. The memory peak while moving files, 340 to 460 MiB for every server, did not rank the servers the same way in both runs; Express on Bun had the lowest.</p>
+              <p class="mk-faq-answer">Downloads and the memory peak while moving files: Express on Node.js downloaded 8,596 MiB/s against the default's 8,483.6, and Express on Bun peaked at 343 MiB against the default's 421 MiB. bunway matched the default's p99 latency of 2 ms.</p>
             </div>
           </article>
           <article class="mk-faq-item">

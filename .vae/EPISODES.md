@@ -79,3 +79,5 @@ Wrap: EVERY lead becomes a test | .vae/VERIFY.py rule | one MEMORY line with BC,
 2026-11-02T05:17:47Z s=472a9d74 FINDING README.md:522 B01 learn=none: one-off edit error; benchmark prose is copied from a run's results and no rule kind compares prose to output/bench
 2026-11-02T05:24:59Z s=472a9d74 DONE fp=dded8b2c7cc0 cov=90.8% paths=ARCH.md,README.md,docs/index.html,src/providers/bun.ts
 2026-11-02T05:24:59Z s=472a9d74 FINDING ARCH.md:60 L03 learn=none: one-off wording error caught in review; no rule kind checks cross-page consistency of prose
+2026-11-02T05:34:55Z s=472a9d74 DONE fp=d07b8bc74cf1 cov=90.8% paths=ARCH.md,README.md,docs/index.html,src/providers/bun.ts
+2026-11-02T05:34:55Z s=472a9d74 FINDING docs/index.html:282 A01 learn=none: human instruction about page content; no rule kind compares prose with output/bench
