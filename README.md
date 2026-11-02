@@ -177,12 +177,12 @@ await server.start(); // listening at http://127.0.0.1:63920
 
 | Provider | Import | Runs on | Install | calls/s | RSS idle / under calls | Choose it for |
 | --- | --- | --- | --- | ---: | ---: | --- |
-| none (default) | | Bun | nothing | 41,930 | 29 / 59 MiB | everything on Bun; `getApp().fetch` answers your own routes |
-| `bunwayProvider()` | `defuss-rpc/providers/bunway` | Bun | `bunway` | 28,491 | 36 / 65 MiB | the Express API on `Bun.serve` |
-| `expressProvider()` | `defuss-rpc/providers/express` | Bun | `express` 5 | 20,027 | 45 / 129 MiB | an existing Express app and its middleware |
-| `expressProvider()` | `defuss-rpc/providers/express` | Node.js | `express` 5 | 16,776 | 99 / 213 MiB | Node.js, where there is no default |
+| none (default) | | Bun | nothing | 63,926 | 29 / 59 MiB | everything on Bun; `getApp().fetch` answers your own routes |
+| `bunwayProvider()` | `defuss-rpc/providers/bunway` | Bun | `bunway` | 53,315 | 38 / 70 MiB | the Express API on `Bun.serve` |
+| `expressProvider()` | `defuss-rpc/providers/express` | Bun | `express` 5 | 41,437 | 46 / 163 MiB | an existing Express app and its middleware |
+| `expressProvider()` | `defuss-rpc/providers/express` | Node.js | `express` 5 | 32,784 | 98 / 243 MiB | Node.js, where there is no default |
 
-Numbers from one `make bench` run (2026-11-01, see [Benchmark](#benchmark)): small calls per second and the server process's resident memory, idle and under that load.
+Numbers from one `make bench` run (2026-11-02, see [Benchmark](#benchmark)): small calls per second and the server process's resident memory, idle and under that load.
 
 Each has a runnable file: [`server-bun.ts`](examples/server-bun.ts), [`server-express.ts`](examples/server-express.ts), [`server-bunway.ts`](examples/server-bunway.ts). On Node.js there is no default: the constructor throws and names `expressProvider()`, because a default there would have to import a framework the application did not choose. `server.getApp()` returns the provider's app for your own routes, as both examples above show. Every server listens on port 63920 (`DEFAULT_PORT`) unless you pass `port`; `0` picks a free one.
 
@@ -513,21 +513,21 @@ Their READMEs show the client side and list the options.
 
 | Server | call req/s | call p50 / p99 ms | stream (100 frames) req/s | upload (1 MiB each) | download (8 MiB each) | RSS idle / calls / peak |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| express on Node.js | 16,776 | 3 / 9 | 3,991 | 547 MiB/s | 4566.4 MiB/s | 99 / 213 / 335 MiB |
-| express on Bun | 20,027 | 2 / 7 | 5,134 | 836.2 MiB/s | 5022.8 MiB/s | 45 / 129 / 308 MiB |
-| bunway on Bun | 28,491 | 2 / 4 | 7,304 | 1234 MiB/s | 5456.4 MiB/s | 36 / 65 / 394 MiB |
-| no provider (Bun.serve) on Bun | 41,930 | 1 / 3 | 6,748 | 1002.2 MiB/s | 5285.2 MiB/s | 29 / 59 / 384 MiB |
-| bare rpcRoute in Bun.serve on Bun | 62,621 | 0 / 2 | 9,244 | 1251.8 MiB/s | 5090 MiB/s | 29 / 66 / 389 MiB |
+| express on Node.js | 32,784 | 1 / 3 | 7,760 | 1257.6 MiB/s | 8596 MiB/s | 98 / 243 / 433 MiB |
+| express on Bun | 41,437 | 1 / 3 | 10,426 | 1497 MiB/s | 8466.4 MiB/s | 46 / 163 / 343 MiB |
+| bunway on Bun | 53,315 | 1 / 2 | 11,738 | 1603.8 MiB/s | 8403.6 MiB/s | 38 / 70 / 455 MiB |
+| no provider (Bun.serve) on Bun | 63,926 | 0 / 2 | 12,206 | 1626.2 MiB/s | 8483.6 MiB/s | 29 / 59 / 421 MiB |
+| bare rpcRoute in Bun.serve on Bun | 123,821 | 0 / 1 | 13,625 | 1656.6 MiB/s | 8700 MiB/s | 29 / 68 / 414 MiB |
 
-Measured 2026-11-01T21:18:04.562Z on Apple M5 Max, 18 cores, 48 GiB, darwin arm64; Node.js v26.11.1, Bun 1.4.3; 5 s per scenario after 1 s warm-up, 64 connections (uploads and downloads 16), autocannon with 4 worker threads on the same machine (load average 19.3 before the run). RSS is the server process's resident set size from `ps`: idle after start, the peak under the call load, and the peak over all four scenarios.
+Measured 2026-11-02T05:14:14.247Z on Apple M5 Max, 18 cores, 48 GiB, darwin arm64; Node.js v26.11.1, Bun 1.4.3; 5 s per scenario after 1 s warm-up, 64 connections (uploads and downloads 16), autocannon with 4 worker threads on the same machine (load average 6.3 before the run). RSS is the server process's resident set size from `ps`: idle after start, the peak under the call load, and the peak over all four scenarios.
 
-What the numbers show, in this run and in a second one right before it (load average 17.0):
-- Without a provider, `ExpressRpcServer` answered the most small calls of every `ExpressRpcServer` setup in both runs (41,930 and 35,798 per second; bunway 28,491 and 28,296; Express on Bun 20,027 and 20,981; Express on Node.js 16,776 and 15,551), with the lowest p99 latency (3 ms).
-- It also needed the least memory in both runs: 29 MiB idle and 57 to 59 MiB under the call load, against 36 to 37 and 65 to 66 MiB for bunway, 45 and 114 to 129 MiB for Express on Bun, and 98 to 99 and 213 to 242 MiB for Express on Node.js.
-- For streams and files the default and bunway were within each other's noise (streams 6,748 and 7,500 against 7,304 and 7,098 per second). Every server moved 0.5 to 1.25 GiB/s up and 4.4 to 5.5 GiB/s down.
-- The peak memory while moving files (16 connections, 1 MiB uploads and 8 MiB downloads) was 300 to 400 MiB for every server and did not rank the same in both runs; Express on Bun had the lowest peak in both (308 and 298 MiB).
-- `rpcRoute` in a bare `Bun.serve` answered 1.5 times as many small calls as `ExpressRpcServer` without a provider (62,621 against 41,930; 56,056 against 35,798), with the same idle memory. That gap is what `ExpressRpcServer` adds on top: CORS, routing, body reading and the size limit.
-- Other jobs kept the load average at 17 to 19 during both runs; compare rows of one run, not runs of different machines.
+What the numbers show, in this run and in a second one right before it (load average 4.4):
+- Without a provider, `ExpressRpcServer` answered the most small calls of every `ExpressRpcServer` setup in both runs (63,926 and 64,195 per second; bunway 53,315 and 52,784; Express on Bun 41,437 and 41,680; Express on Node.js 32,784 and 33,237), with a p99 latency of 2 and 1 ms, against 2 ms for bunway and 3 ms for Express.
+- It also needed the least memory in both runs: 29 MiB idle and 59 MiB under the call load, against 38 and 70 MiB for bunway, 45 to 46 and 163 MiB for Express on Bun, and 98 and 243 MiB for Express on Node.js.
+- For streams the default led bunway by 4 to 5 percent in both runs (12,206 and 12,113 against 11,738 and 11,545 per second). Every server moved 1.2 to 1.6 GiB/s up and 8.2 to 8.6 GiB/s down; of the `ExpressRpcServer` setups, Express on Node.js downloaded fastest in both runs, 1 to 3 percent ahead of the default.
+- The peak memory while moving files (16 connections, 1 MiB uploads and 8 MiB downloads) was 340 to 460 MiB for every server and did not rank the same in both runs; Express on Bun had the lowest peak in both (343 MiB).
+- `rpcRoute` in a bare `Bun.serve` answered 1.9 times as many small calls as `ExpressRpcServer` without a provider (123,821 against 63,926; 123,002 against 64,195), with the same idle memory. That gap is what `ExpressRpcServer` adds on top: CORS, routing, body reading and the size limit.
+- The load average was 6.3 and 4.4 before the two runs; compare rows of one run, not runs of different machines.
 
 `make bench` measures this on your machine: `scripts/bench.mjs` starts each server in its own process and loads it with [autocannon](https://github.com/mcollina/autocannon) for 5 s per scenario (`BENCH_DURATION`), after checking one answer of each. Compare rows of one run; the load generator shares the machine with the server.
 
