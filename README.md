@@ -4,9 +4,9 @@
 [![npm](https://img.shields.io/npm/v/defuss-rpc)](https://www.npmjs.com/package/defuss-rpc)
 [![License](https://img.shields.io/github/license/kyr0/defuss-rpc)](LICENSE)
 
-The [defuss](https://github.com/kyr0/defuss) runtime's remote procedure calls: call your server's classes and modules from the browser, Node.js or Bun as if they were local, fully typed.
+The [defuss](https://github.com/kyr0/defuss) runtime's remote procedure calls: call server-side functions and classes as if they ran client-side.
 
-Methods return through [DSON](https://github.com/kyr0/defuss-dson), so `Date`, `Map`, `Set`, `BigInt` and typed arrays arrive intact; async generators stream to `for await`; files go up and down with progress, gzip, resume and SHA-256. The server is one Fetch API handler: `Bun.serve` and Astro routes run it as it is, and the bundled `ExpressRpcServer` runs it on `Bun.serve` by default, or on the framework you import as its provider: Express on Node.js and Bun, or bunway on Bun. The project site in [`docs/`](docs/index.html) has a live demo against a real server (`make start`).
+defuss-rpc exposes them to the client as a fully typed, async API: the client builds it from the server's schema at runtime and takes its types from your server code. [defuss-dson](https://github.com/kyr0/defuss-dson) encodes and decodes every argument and result, so `Date`, `Map`, `Set`, `BigInt` and typed arrays arrive intact. Calls, one after another or in parallel, are plain HTTP with JSON bodies; async generators stream as NDJSON that you read with `for await`; files travel as raw bytes, uploads with progress, gzip, resume and SHA-256. Servers run on Bun (`Bun.serve`, Express or bunway), on Node.js (Express), and inside Vite and Astro through defuss-rpc-vite and defuss-rpc-astro. The project site in [`docs/`](docs/index.html) shows every example and how a call travels over the wire (`make start` serves it).
 
 ## TL;DR
 
@@ -16,29 +16,36 @@ Features:
 - 🧩 Classes and modules as APIs: a class gets a fresh instance per call, a module is shared; no decorators, no IDL
 - 🔒 Typed end to end: `getRpcClient<typeof RpcApi>()` types every call, argument and result from the server's own export
 - 🌊 Generators stream: an `async *` method sends each `yield` as an NDJSON frame; `break` on the client stops the server generator
-- 🧬 Types JSON loses: `Date`, `Map`, `Set`, `BigInt`, `Uint8Array` and every typed array, as arguments and results
+- 🧬 Types JSON loses: `Date`, `Map`, `Set`, `BigInt`, `Uint8Array` and every typed array, plus `undefined`, `NaN`, `±Infinity` and `-0`, as arguments and results
 - 📦 Files of any size: uploads stream to disk with SHA-256, gzip, Server-Sent Events progress and resume after a dropped connection; downloads carry name, type and hash
 - 🛡️ Hooks at both ends: server guards answer 403 before a method runs; client hooks add headers, metrics and checks around every call
 - 🌐 One Fetch handler: `rpcRoute` serves `Bun.serve` and Astro routes as it is; `ExpressRpcServer` adds CORS, gzip, limits and health checks
-- 🔌 Bun first, your framework if you want one: without a provider `ExpressRpcServer` runs on `Bun.serve` at port 63920; import Express (Node.js and Bun) or bunway (Bun) as its provider instead; `make bench` compares them
-- ⚡ Vite and Astro: the packages defuss-rpc-vite and defuss-rpc-astro start the RPC server beside `vite dev` and `astro dev` and tell the client where it is; defuss-rpc itself depends on neither
+- 🔌 Bun first: without a provider `ExpressRpcServer` runs on `Bun.serve` at port 63920, and in `make bench` it answered the most calls with the least memory; import Express (Node.js and Bun) or bunway (Bun) as its provider only when you need one
+- ⚡ Vite and Astro, optional: the packages defuss-rpc-vite and defuss-rpc-astro start the RPC server beside `vite dev` and `astro dev` and tell the client where it is; defuss-rpc needs neither
 - 🧪 Tested where it runs: Vitest in Node.js, Bun, Chromium and WebKit on every provider, plus an end-to-end run of the packed package and every documented example on Node.js and Bun
 - 🟦 Written in TypeScript; ESM and CommonJS builds
 
 ## Install
 
-We recommend [`bun`](https://bun.sh) as package manager and script runner:
+We recommend [`bun`](https://bun.sh) as package manager, script runner and server runtime:
 
 ```bash
 bun add defuss-rpc
-# On Bun, ExpressRpcServer needs nothing else: Bun.serve is the default.
-# On Node.js, or for a framework's routes and middleware, add the framework of one provider:
-bun add express            # expressProvider: Node.js and Bun (TypeScript: bun add -d @types/express)
-bun add bunway             # bunwayProvider: Bun only
-# or: npm install defuss-rpc express
 ```
 
-Entry points: `defuss-rpc/client`, `defuss-rpc/server`, `defuss-rpc/express-server`, and `defuss-rpc/providers/*` (one per provider); each also resolves with a `.js` suffix, as in earlier releases. The Vite plugin and the Astro integration are the packages [defuss-rpc-vite](integrations/vite/README.md) and [defuss-rpc-astro](integrations/astro/README.md).
+On Bun that is all you need: without a provider, `ExpressRpcServer` runs on `Bun.serve`, the setup that answered the most calls with the least memory in the [Benchmark](#benchmark). Everything else is optional:
+
+```bash
+# Optional: a framework provider, for Node.js or for a framework's routes and middleware
+bun add express            # expressProvider: Node.js and Bun (TypeScript: bun add -d @types/express)
+bun add bunway             # bunwayProvider: Bun only
+# Optional: let a dev server you already use start the RPC server
+bun add defuss-rpc-vite                    # Vite
+bun add defuss-rpc-astro defuss-rpc-vite   # Astro
+# with npm instead of bun: npm install defuss-rpc express
+```
+
+Entry points: `defuss-rpc/client`, `defuss-rpc/server`, `defuss-rpc/express-server`, and `defuss-rpc/providers/*` (one per provider); each also resolves with a `.js` suffix, as in earlier releases. The optional Vite plugin and Astro integration are the packages [defuss-rpc-vite](integrations/vite/README.md) and [defuss-rpc-astro](integrations/astro/README.md).
 
 ## Quick start
 
@@ -58,14 +65,20 @@ export const MathApi = {
   },
 };
 
-/** A class: the server creates a fresh instance for every call, so fields never leak between requests. */
+/**
+ * A class: the server creates a fresh instance for every call, so
+ * fields never leak between requests.
+ */
 export class GreeterApi {
   async greet(name: string) {
     return `Hello, ${name}!`;
   }
 }
 
-/** An async generator streams: the client receives every `yield` as it happens. */
+/**
+ * An async generator streams: the client receives every `yield`
+ * as it happens.
+ */
 export const ChatApi = {
   async *reply(prompt: string) {
     for (const word of `You said: ${prompt}`.split(" ")) {
@@ -76,7 +89,10 @@ export const ChatApi = {
   },
 };
 
-/** DSON keeps the types JSON loses: Date, Set, Map, BigInt, typed arrays. */
+/**
+ * DSON keeps the types JSON loses: Date, Set, Map, BigInt and
+ * typed arrays.
+ */
 export const TypesApi = {
   async sample() {
     return {
@@ -92,7 +108,8 @@ export const TypesApi = {
 /** Which runtime answers: the same API runs on Node.js and Bun. */
 export const ServerInfo = {
   async runtime() {
-    return process.versions.bun ? `Bun ${process.versions.bun}` : `Node.js ${process.versions.node}`;
+    const { bun, node } = process.versions;
+    return bun ? `Bun ${bun}` : `Node.js ${node}`;
   },
 };
 
@@ -116,19 +133,24 @@ import "./hooks.ts";
 
 createRpcServer(RpcApi);
 
-// No provider: Bun.serve, without a framework. On Node.js, select one (server-express.ts).
+// No provider: Bun.serve, without a framework. On Node.js, select
+// one (server-express.ts).
 const server = new ExpressRpcServer({
   host: "127.0.0.1",
-  port: process.env.PORT ? Number(process.env.PORT) : undefined, // undefined: 63920
+  // undefined: the default port, 63920
+  port: process.env.PORT ? Number(process.env.PORT) : undefined,
 });
-// Requests outside the RPC routes go to one fetch handler (default: 404); add your own before start().
+// Requests outside the RPC routes go to one fetch handler (default:
+// 404); add your own before start().
 server.getApp().fetch = (request) =>
-  new URL(request.url).pathname === "/version" ? Response.json({ version: 1 }) : new Response("Not Found", { status: 404 });
-await server.start(); // logs: … INFO defuss-rpc rpc server listening url=http://127.0.0.1:63920 provider=bun
+  new URL(request.url).pathname === "/version"
+    ? Response.json({ version: 1 })
+    : new Response("Not Found", { status: 404 });
+await server.start(); // listening at http://127.0.0.1:63920
 ```
 <!-- /example -->
 
-On Node.js, or to keep a framework's routes and middleware, import a provider; nothing else changes:
+Stay on this default unless you run on Node.js or need a framework's routes and middleware: in `make bench` it answered the most calls of every `ExpressRpcServer` setup with the least memory (table below). For those cases, import a provider; nothing else changes:
 
 <!-- example: examples/server-express.ts#server-express -->
 ```ts
@@ -146,17 +168,21 @@ const server = new ExpressRpcServer({
   host: "127.0.0.1",
   port: Number(process.env.PORT ?? 63920),
 });
-// Your own Express routes and middleware live on the same app; add them before start().
+// Your own Express routes and middleware live on the same app;
+// add them before start().
 server.getApp().get("/version", (_req, res) => void res.json({ version: 1 }));
-await server.start(); // logs: … INFO defuss-rpc rpc server listening url=http://127.0.0.1:63920 provider=express
+await server.start(); // listening at http://127.0.0.1:63920
 ```
 <!-- /example -->
 
-| Provider | Import | Runs on | Install | Choose it for |
-| --- | --- | --- | --- | --- |
-| none (default) | | Bun | nothing | the most calls per second (see [Benchmark](#benchmark)); `getApp().fetch` answers your own routes |
-| `expressProvider()` | `defuss-rpc/providers/express` | Node.js, Bun | `express` 5 | an existing Express app and its middleware |
-| `bunwayProvider()` | `defuss-rpc/providers/bunway` | Bun | `bunway` | the Express API on `Bun.serve` |
+| Provider | Import | Runs on | Install | calls/s | RSS idle / under calls | Choose it for |
+| --- | --- | --- | --- | ---: | ---: | --- |
+| none (default) | | Bun | nothing | 41,930 | 29 / 59 MiB | everything on Bun; `getApp().fetch` answers your own routes |
+| `bunwayProvider()` | `defuss-rpc/providers/bunway` | Bun | `bunway` | 28,491 | 36 / 65 MiB | the Express API on `Bun.serve` |
+| `expressProvider()` | `defuss-rpc/providers/express` | Bun | `express` 5 | 20,027 | 45 / 129 MiB | an existing Express app and its middleware |
+| `expressProvider()` | `defuss-rpc/providers/express` | Node.js | `express` 5 | 16,776 | 99 / 213 MiB | Node.js, where there is no default |
+
+Numbers from one `make bench` run (2026-11-01, see [Benchmark](#benchmark)): small calls per second and the server process's resident memory, idle and under that load.
 
 Each has a runnable file: [`server-bun.ts`](examples/server-bun.ts), [`server-express.ts`](examples/server-express.ts), [`server-bunway.ts`](examples/server-bunway.ts). On Node.js there is no default: the constructor throws and names `expressProvider()`, because a default there would have to import a framework the application did not choose. `server.getApp()` returns the provider's app for your own routes, as both examples above show. Every server listens on port 63920 (`DEFAULT_PORT`) unless you pass `port`; `0` picks a free one.
 
@@ -171,23 +197,33 @@ import "./hooks.ts";
 
 createRpcServer(RpcApi);
 
-// rpcRoute answers requests; CORS for browser pages on other origins is the server's job.
+// rpcRoute answers requests; CORS for browser pages on other
+// origins is the server's job.
 const cors = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Expose-Headers": "Content-Disposition, X-File-Sha256, X-Upload-Offset",
+  "Access-Control-Expose-Headers":
+    "Content-Disposition, X-File-Sha256, X-Upload-Offset",
 };
 
 const server = Bun.serve({
   hostname: "127.0.0.1",
   port: Number(process.env.PORT ?? 63920),
-  idleTimeout: 120, // seconds; streams and upload progress keep a request open longer than Bun's default 10
+  // seconds: streams and upload progress keep a request open
+  // longer than Bun's default of 10
+  idleTimeout: 120,
   async fetch(request) {
     if (request.method === "OPTIONS") {
-      const allowHeaders = request.headers.get("Access-Control-Request-Headers") ?? "Content-Type";
-      return new Response(null, { headers: { ...cors, "Access-Control-Allow-Headers": allowHeaders } });
+      const allowHeaders =
+        request.headers.get("Access-Control-Request-Headers") ??
+        "Content-Type";
+      return new Response(null, {
+        headers: { ...cors, "Access-Control-Allow-Headers": allowHeaders },
+      });
     }
     const response = await rpcRoute({ request });
-    for (const [name, value] of Object.entries(cors)) response.headers.set(name, value);
+    for (const [name, value] of Object.entries(cors)) {
+      response.headers.set(name, value);
+    }
     return response;
   },
 });
@@ -200,7 +236,13 @@ In an Astro project without the integration, the same handler is a route: `expor
 
 <!-- example: examples/client.ts#client -->
 ```ts
-import { addHook, download, getRpcClient, setHeaders, uploadComplete } from "defuss-rpc/client";
+import {
+  addHook,
+  download,
+  getRpcClient,
+  setHeaders,
+  uploadComplete,
+} from "defuss-rpc/client";
 import type { RpcApi } from "./api.ts";
 
 const baseUrl = process.env.RPC_URL ?? "http://127.0.0.1:63920";
@@ -220,7 +262,9 @@ A generator method answers with `application/x-ndjson`, one frame per `yield`, t
 <!-- example: examples/client.ts#stream -->
 ```ts
 const words: string[] = [];
-for await (const word of rpc.ChatApi.reply("hi there")) words.push(word);
+for await (const word of rpc.ChatApi.reply("hi there")) {
+  words.push(word);
+}
 console.log(words.join(" ")); // You said: hi there
 ```
 <!-- /example -->
@@ -241,9 +285,12 @@ A generator that throws ends the stream with an `error` frame, which the client 
 
 <!-- example: examples/client.ts#types -->
 ```ts
-const sample = await rpc.TypesApi.sample();
-console.log(sample.when.toISOString(), sample.tags.has("dson"), sample.scores.get("ada"), sample.big); // 2026-11-01T12:00:00.000Z true 1815 18446744073709551616n
-console.log(sample.bytes instanceof Uint8Array, sample.bytes.length); // true 4
+const { when, tags, scores, big, bytes } =
+  await rpc.TypesApi.sample();
+console.log(when.toISOString()); // 2026-11-01T12:00:00.000Z
+console.log(tags.has("dson"), scores.get("ada")); // true 1815
+console.log(big); // 18446744073709551616n
+console.log(bytes instanceof Uint8Array); // true
 ```
 <!-- /example -->
 
@@ -255,20 +302,25 @@ Register handlers by name on the server. A buffered handler gets a `Uint8Array`;
 
 <!-- example: examples/files.ts#files -->
 ```ts
-import { addDownloadHandler, addUploadHandler } from "defuss-rpc/server";
+import {
+  addDownloadHandler,
+  addUploadHandler,
+} from "defuss-rpc/server";
 
 interface StoredFile {
   data: Uint8Array;
   name: string;
 }
 
-/** The last 20 files; a demo server must not grow without bound. */
+/** The last 20 files: a demo must not grow without bound. */
 const files = new Map<string, StoredFile>();
 
 addUploadHandler("file", (data, meta) => {
-  files.set(meta.uploadId, { data, name: meta.originalFilename || `${meta.uploadId}.bin` });
+  const { uploadId: id, originalFilename, sha256 } = meta;
+  const name = originalFilename || `${id}.bin`;
+  files.set(id, { data, name });
   if (files.size > 20) files.delete(files.keys().next().value!);
-  return { id: meta.uploadId, size: data.byteLength, sha256: meta.sha256 };
+  return { id, size: data.byteLength, sha256 };
 });
 
 addDownloadHandler("file", ({ downloadId }) => {
@@ -276,7 +328,11 @@ addDownloadHandler("file", ({ downloadId }) => {
   if (!file) throw new Error(`Unknown file ${downloadId}`);
   return {
     data: file.data,
-    fileMeta: { size: file.data.byteLength, contentType: "application/octet-stream", filename: file.name },
+    fileMeta: {
+      size: file.data.byteLength,
+      contentType: "application/octet-stream",
+      filename: file.name,
+    },
   };
 });
 ```
@@ -286,16 +342,24 @@ From Node.js or Bun:
 
 <!-- example: examples/client.ts#upload -->
 ```ts
-const bytes = new TextEncoder().encode("hello, file");
-const uploaded = await uploadComplete<{ id: string; size: number }>("file", bytes, { baseUrl, originalFilename: "hello.txt" });
-console.log(uploaded.result.size, uploaded.sha256.length); // 11 64
+type StoredFile = { id: string; size: number };
+const data = new TextEncoder().encode("hello, file");
+const { result, sha256 } = await uploadComplete<StoredFile>(
+  "file",
+  data,
+  { baseUrl, originalFilename: "hello.txt" },
+);
+console.log(result.size, sha256.length); // 11 64
 
-const file = await download("file", baseUrl, { downloadId: uploaded.result.id });
-console.log(new TextDecoder().decode(file.data), file.filename); // hello, file hello.txt
+const file = await download("file", baseUrl, {
+  downloadId: result.id,
+});
+const text = new TextDecoder().decode(file.data);
+console.log(text, file.filename); // hello, file hello.txt
 ```
 <!-- /example -->
 
-In the browser, with progress; the website's demo runs exactly this code:
+In the browser, with progress; the end-to-end test runs exactly this code in Chromium and WebKit:
 
 <!-- example: examples/browser.ts#browser-upload -->
 ```ts
@@ -307,18 +371,28 @@ export interface StoredFile {
   sha256: string;
 }
 
-/** Uploads a File and reports progress: "sending" from the browser, "receiving" from the server's SSE stream. */
-export async function sendFile(file: File, baseUrl: string, onProgress: (phase: string, percent: number) => void) {
-  for await (const event of upload<StoredFile>("file", file, { baseUrl, originalFilename: file.name })) {
+/**
+ * Uploads a File and reports progress: "sending" from the browser,
+ * "receiving" from the server's SSE stream.
+ */
+export async function sendFile(
+  file: File,
+  baseUrl: string,
+  onProgress: (phase: string, percent: number) => void,
+) {
+  const options = { baseUrl, originalFilename: file.name };
+  for await (const event of upload<StoredFile>("file", file, options)) {
     if (event.type === "complete") return event;
     onProgress(event.type, event.percent);
   }
   throw new Error("upload ended without a result");
 }
 
-/** Fetches the file back as a Blob, ready for an object URL, a canvas or a save link. */
+/** Fetches the file back as a Blob, for an object URL or a save link. */
 export async function fetchFile(id: string, baseUrl: string) {
-  const { blob, result } = await downloadAsBlob("file", baseUrl, { downloadId: id });
+  const { blob, result } = await downloadAsBlob("file", baseUrl, {
+    downloadId: id,
+  });
   return { blob, filename: result.filename ?? `${id}.bin` };
 }
 ```
@@ -342,11 +416,15 @@ import { addHook } from "defuss-rpc/server";
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
-// Guards run before every call, upload and download; returning false answers HTTP 403.
-// For uploads the namespace is "__upload__" and args[0] is the size the client announced.
+// Guards run before every call, upload and download; returning
+// false answers HTTP 403. For uploads the namespace is
+// "__upload__" and args[0] is the size the client announced.
 addHook({
   phase: "guard",
-  fn: (namespace, _method, args) => namespace !== "__upload__" || Number(args[0]) <= MAX_UPLOAD_BYTES,
+  fn: (namespace, _method, args) => {
+    if (namespace !== "__upload__") return true;
+    return Number(args[0]) <= MAX_UPLOAD_BYTES;
+  },
 });
 ```
 <!-- /example -->
@@ -355,9 +433,11 @@ A server guard gets `(namespace, method, args, request)`; only an explicit `fals
 
 <!-- example: examples/client.ts#client-hooks -->
 ```ts
-setHeaders({ Authorization: "Bearer demo-token" }); // sent with every later call and upload
+// sent with every later call and upload
+setHeaders({ Authorization: "Bearer demo-token" });
 let answered = 0;
-addHook({ phase: "result", fn: () => void answered++ }); // runs after each decoded result
+// runs after each decoded result
+addHook({ phase: "result", fn: () => void answered++ });
 await rpc.MathApi.multiply(6, 7);
 console.log(answered); // 1
 ```
@@ -367,7 +447,7 @@ A client guard must return `true`: any other value (also `undefined`) aborts the
 
 ## Vite and Astro
 
-Two packages of their own, so that defuss-rpc depends on no build tool and no framework: [defuss-rpc-vite](integrations/vite/README.md) starts an `ExpressRpcServer` beside `vite dev` and serves `virtual:defuss-rpc`, which registers that server as the client's default endpoint; [defuss-rpc-astro](integrations/astro/README.md) wraps the plugin and adds `Astro.locals.rpcEndpoint`. Without a provider, the RPC server runs on `Bun.serve` at port 63920, so the dev server runs on Bun (`bunx --bun vite`, `bunx --bun astro dev`).
+**Optional: you need neither.** defuss-rpc runs on its own, as [Serve it](#2-serve-it) shows. Use these only when your app already runs on Vite or Astro and its dev server should start the RPC server for you. They are two packages of their own, so that defuss-rpc depends on no build tool and no framework: [defuss-rpc-vite](integrations/vite/README.md) starts an `ExpressRpcServer` beside `vite dev` and serves `virtual:defuss-rpc`, which registers that server as the client's default endpoint; [defuss-rpc-astro](integrations/astro/README.md) wraps the plugin and adds `Astro.locals.rpcEndpoint`. Without a provider, the RPC server runs on `Bun.serve` at port 63920, so the dev server runs on Bun (`bunx --bun vite`, `bunx --bun astro dev`).
 
 ```bash
 bun add defuss-rpc-vite                    # Vite
@@ -380,9 +460,16 @@ import { defineConfig } from "vite";
 import { defussRpc } from "defuss-rpc-vite";
 import RpcApi from "./api.ts";
 
-// No provider: the RPC server runs on Bun.serve, port 63920. On Node.js add `provider: expressProvider()`.
+// No provider: the RPC server runs on Bun.serve, port 63920.
+// On Node.js add `provider: expressProvider()`.
 export default defineConfig({
-  plugins: [defussRpc({ api: RpcApi, host: "127.0.0.1", watch: ["api.ts"] })],
+  plugins: [
+    defussRpc({
+      api: RpcApi,
+      host: "127.0.0.1",
+      watch: ["api.ts"],
+    }),
+  ],
 });
 ```
 <!-- /example -->
@@ -394,8 +481,15 @@ import { defussRpc } from "defuss-rpc-astro";
 import RpcApi from "./api.ts";
 
 export default defineConfig({
-  // No provider: the RPC server runs on Bun.serve, port 63920. On Node.js add `provider: expressProvider()`.
-  integrations: [defussRpc({ api: RpcApi, host: "127.0.0.1", watch: ["api.ts"] })],
+  // No provider: the RPC server runs on Bun.serve, port 63920.
+  // On Node.js add `provider: expressProvider()`.
+  integrations: [
+    defussRpc({
+      api: RpcApi,
+      host: "127.0.0.1",
+      watch: ["api.ts"],
+    }),
+  ],
 });
 ```
 <!-- /example -->
@@ -417,23 +511,119 @@ Their READMEs show the client side and list the options.
 
 ## Benchmark
 
-| Server | call req/s | call p50 / p99 ms | stream (100 frames) req/s | upload (1 MiB each) | download (8 MiB each) |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| express on Node.js | 10,407 | 4 / 28 | 2,308 | 377.6 MiB/s | 4304 MiB/s |
-| express on Bun | 14,302 | 3 / 28 | 3,513 | 615 MiB/s | 3996.8 MiB/s |
-| bunway on Bun | 20,616 | 2 / 14 | 5,093 | 698.4 MiB/s | 4299.6 MiB/s |
-| no provider (Bun.serve) on Bun | 25,112 | 2 / 11 | 5,430 | 749.2 MiB/s | 3977.2 MiB/s |
-| bare rpcRoute in Bun.serve on Bun | 47,082 | 0 / 8 | 6,317 | 705.6 MiB/s | 4329.6 MiB/s |
+| Server | call req/s | call p50 / p99 ms | stream (100 frames) req/s | upload (1 MiB each) | download (8 MiB each) | RSS idle / calls / peak |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| express on Node.js | 16,776 | 3 / 9 | 3,991 | 547 MiB/s | 4566.4 MiB/s | 99 / 213 / 335 MiB |
+| express on Bun | 20,027 | 2 / 7 | 5,134 | 836.2 MiB/s | 5022.8 MiB/s | 45 / 129 / 308 MiB |
+| bunway on Bun | 28,491 | 2 / 4 | 7,304 | 1234 MiB/s | 5456.4 MiB/s | 36 / 65 / 394 MiB |
+| no provider (Bun.serve) on Bun | 41,930 | 1 / 3 | 6,748 | 1002.2 MiB/s | 5285.2 MiB/s | 29 / 59 / 384 MiB |
+| bare rpcRoute in Bun.serve on Bun | 62,621 | 0 / 2 | 9,244 | 1251.8 MiB/s | 5090 MiB/s | 29 / 66 / 389 MiB |
 
-Measured 2026-11-01T19:02:35.151Z on Apple M5 Max, 18 cores, 48 GiB, darwin arm64; Node.js v26.11.1, Bun 1.4.3; 5 s per scenario after 1 s warm-up, 64 connections (uploads and downloads 16), autocannon with 4 worker threads on the same machine (load average 26.7 before the run).
+Measured 2026-11-01T21:18:04.562Z on Apple M5 Max, 18 cores, 48 GiB, darwin arm64; Node.js v26.11.1, Bun 1.4.3; 5 s per scenario after 1 s warm-up, 64 connections (uploads and downloads 16), autocannon with 4 worker threads on the same machine (load average 19.3 before the run). RSS is the server process's resident set size from `ps`: idle after start, the peak under the call load, and the peak over all four scenarios.
 
-What the numbers show, measured as above:
-- Without a provider, `ExpressRpcServer` answered the most small calls of every server setup (25,112 per second; bunway 20,616, Express on Bun 14,302, Express on Node.js 10,407), and the most streams and uploads; its lead over bunway is inside the noise.
-- `rpcRoute` in a bare `Bun.serve` answered small calls 1.9 times as fast as `ExpressRpcServer` without a provider. Both run on `Bun.serve` without a framework, so that gap is what `ExpressRpcServer` adds on top of `rpcRoute`: CORS, routing, body reading and the size limit.
-- For files, every server moved 0.4 to 0.75 GiB/s up and about 4 GiB/s down: the servers differ less for files than for small calls.
-- Other jobs kept the load average at 26.7 during this run, and the numbers are about 40% of a run on the same machine at load 8.8 (bunway: 20,616 against 50,032 calls per second). Compare rows of one run, and treat differences of less than about a third as noise.
+What the numbers show, in this run and in a second one right before it (load average 17.0):
+- Without a provider, `ExpressRpcServer` answered the most small calls of every `ExpressRpcServer` setup in both runs (41,930 and 35,798 per second; bunway 28,491 and 28,296; Express on Bun 20,027 and 20,981; Express on Node.js 16,776 and 15,551), with the lowest p99 latency (3 ms).
+- It also needed the least memory in both runs: 29 MiB idle and 57 to 59 MiB under the call load, against 36 to 37 and 65 to 66 MiB for bunway, 45 and 114 to 129 MiB for Express on Bun, and 98 to 99 and 213 to 242 MiB for Express on Node.js.
+- For streams and files the default and bunway were within each other's noise (streams 6,748 and 7,500 against 7,304 and 7,098 per second). Every server moved 0.5 to 1.25 GiB/s up and 4.4 to 5.5 GiB/s down.
+- The peak memory while moving files (16 connections, 1 MiB uploads and 8 MiB downloads) was 300 to 400 MiB for every server and did not rank the same in both runs; Express on Bun had the lowest peak in both (308 and 298 MiB).
+- `rpcRoute` in a bare `Bun.serve` answered 1.5 times as many small calls as `ExpressRpcServer` without a provider (62,621 against 41,930; 56,056 against 35,798), with the same idle memory. That gap is what `ExpressRpcServer` adds on top: CORS, routing, body reading and the size limit.
+- Other jobs kept the load average at 17 to 19 during both runs; compare rows of one run, not runs of different machines.
 
 `make bench` measures this on your machine: `scripts/bench.mjs` starts each server in its own process and loads it with [autocannon](https://github.com/mcollina/autocannon) for 5 s per scenario (`BENCH_DURATION`), after checking one answer of each. Compare rows of one run; the load generator shares the machine with the server.
+
+## Protocol
+
+Plain HTTP with four body formats: DSON for calls, NDJSON for generators and upload answers, raw bytes for files, Server-Sent Events for upload progress. `ExpressRpcServer` is the HTTP layer below; with `rpcRoute` in your own `Bun.serve` or an Astro route, your server takes its place.
+
+| Layer | Calls | Generators | Uploads | Downloads |
+| --- | --- | --- | --- | --- |
+| your code and the client | typed values: `Date`, `Map`, `Set`, `BigInt`, typed arrays | `for await` over the values | an async iterator of `sending`, `receiving`, `complete` | `{ data, filename, sha256 }` or a Blob |
+| wire (HTTP) | `POST /rpc`: DSON text as `application/json` | `application/x-ndjson`: one DSON frame per line, `yield`, then `return` or `error` | `POST /rpc/upload`: raw bytes (`application/octet-stream`, gzip) and `X-Upload-*` headers; progress as Server-Sent Events with JSON data; the answer as NDJSON | `GET /rpc/download`: raw bytes; `Content-Disposition` (RFC 6266) and `X-File-Sha256` |
+| HTTP layer | CORS; inflates gzip and deflate bodies; 413 above `jsonSizeLimit`; gzip above 1 KiB | gzip flushed after every frame | no size limit; progress events are never compressed | passed through, never compressed |
+| `rpcRoute` and your API | `DSON.parse` gives the arguments, `DSON.stringify` the answer | the generator is pulled once per read | the handler runs after the last byte, with the bytes or a chunked stream | the handler returns bytes, or a stream, with `fileMeta` |
+
+A call fetches the schema once per `baseUrl`, then sends one `POST` per call. A class gets a new instance per call; a module is shared.
+
+```mermaid
+sequenceDiagram
+  participant App as your code
+  participant Client as defuss-rpc/client
+  participant HTTP as HTTP layer
+  participant Route as rpcRoute
+  participant API as your API
+  App->>Client: getRpcClient<RpcApi>({ baseUrl })
+  Client->>Route: POST /rpc/schema (once per baseUrl)
+  Route-->>Client: 200 application/json, the schema
+  App->>Client: rpc.MathApi.add(2, 3)
+  Client->>HTTP: POST /rpc, DSON.stringify({ className, methodName, args })
+  HTTP->>Route: CORS, inflated body, 413 above jsonSizeLimit
+  Route->>API: DSON.parse, guards (403), add(2, 3)
+  API-->>Route: 5
+  Route-->>HTTP: 200 DSON text, application/json
+  HTTP-->>Client: gzip above 1 KiB when accepted
+  Client-->>App: 5
+```
+
+A generator answers with one NDJSON frame per `yield`; the server pulls the next value only when the client reads, and a `break` cancels the response, which runs the generator's `finally`.
+
+```mermaid
+sequenceDiagram
+  participant App as your code
+  participant Client as defuss-rpc/client
+  participant Route as HTTP layer + rpcRoute
+  participant API as your API
+  App->>Client: for await (… of rpc.ChatApi.reply("hi"))
+  Client->>Route: POST /rpc, the same call body
+  Route->>API: reply("hi"), an async generator
+  loop every yield
+    API-->>Route: yield value
+    Route-->>Client: application/x-ndjson, DSON frame { type: "yield" }, gzip flushed per frame
+    Client-->>App: the value
+  end
+  API-->>Route: return, frame { type: "return" }
+  Note over App,API: break instead: the client cancels the body, the server calls generator.return(), finally runs
+```
+
+An upload sends raw bytes; the server writes them to a temp file while it hashes them, then runs the handler. `HEAD` happens only when an `uploadId` resumes an upload.
+
+```mermaid
+sequenceDiagram
+  participant App as your code
+  participant Client as defuss-rpc/client
+  participant Route as HTTP layer + rpcRoute
+  participant API as upload handler
+  App->>Client: upload("file", data, { uploadId })
+  opt resume
+    Client->>Route: HEAD /rpc/upload/:id
+    Route-->>Client: X-Upload-Offset (bytes on disk)
+  end
+  Client->>Route: GET /rpc/upload/progress/:id (EventSource)
+  Client->>Route: POST /rpc/upload, application/octet-stream, gzip, X-Upload-* headers
+  Route->>Route: temp file and SHA-256, chunk by chunk
+  Route-->>Client: text/event-stream, data: { "type": "progress", … }
+  Route->>API: handler(bytes or stream, meta)
+  API-->>Route: result
+  Route-->>Client: 201 NDJSON: received { sha256 }, result
+  Client-->>App: events sending, receiving, complete
+```
+
+A download is one `GET`; name and hash travel in the headers, and the server never compresses the bytes.
+
+```mermaid
+sequenceDiagram
+  participant App as your code
+  participant Client as defuss-rpc/client
+  participant Route as HTTP layer + rpcRoute
+  participant API as download handler
+  App->>Client: download("file", baseUrl, { downloadId })
+  Client->>Route: GET /rpc/download?handler=…&downloadId=…
+  Route->>API: handler({ downloadId, rangeStart, rangeEnd })
+  API-->>Route: bytes, or { data, fileMeta }
+  Route-->>Client: 200 raw bytes, Content-Disposition, X-File-Sha256
+  Client-->>App: { data, filename, sha256 }
+```
+
+[`examples/wire.ndjson`](examples/wire.ndjson) holds a generator's raw answer as the e2e test receives it.
 
 ## Endpoints
 
@@ -482,10 +672,10 @@ claude plugin install defuss-vae@defuss-vae
 | `server-bun.ts` | the API on `ExpressRpcServer` without a provider (`Bun.serve`), plus one route of its own | started on Bun |
 | `server-route.ts` | `rpcRoute` in a hand-written `Bun.serve` | started on Bun |
 | `client.ts` | calls, streams, types, files, hooks; each `console.log` states its output | on Node.js and Bun, against every server |
-| `browser.ts` | upload with progress, download as Blob | by the website, in Chromium and WebKit |
+| `browser.ts` | upload with progress, download as Blob | in Chromium and WebKit, against every server |
 | `integrations/vite/example/`, `integrations/astro/example/` | the plugin and the integration, without a provider | `vite` and `astro dev` on Bun, opened in Chromium |
 
-The project site [`docs/index.html`](docs/index.html) shows the same files and runs a live demo (calls, streaming, DSON types, upload with SHA-256 check, download with image preview) against the server at `?rpc=` (default `http://127.0.0.1:63920`). `make start` serves it at <http://127.0.0.1:4173/> together with the demo server, both on Bun; `make docs` regenerates its code blocks from `examples/`.
+The project site [`docs/index.html`](docs/index.html) shows the same files, highlighted, and the sequence diagrams of [Protocol](#protocol). It is static: no RPC server runs behind it. `make start` serves it at <http://127.0.0.1:4173/> on Bun; `make docs` regenerates its code blocks from `examples/`.
 
 ## Two things to know
 
@@ -499,7 +689,7 @@ The project site [`docs/index.html`](docs/index.html) shows the same files and r
 make setup && make verify
 ```
 
-`make verify` runs oxlint, strict TypeScript and the docs check, the Vitest suites in Node.js, Bun, Chromium and WebKit with coverage, and the end-to-end test of the packed package (every server on Node.js and Bun, both clients, Vite, Astro and the website in Chromium and WebKit). `make bench` compares the providers; `make start` serves the website and the demo server. [ARCH.md](ARCH.md) explains the design for contributors.
+`make verify` runs oxlint, strict TypeScript and the docs check, the Vitest suites in Node.js, Bun, Chromium and WebKit with coverage, and the end-to-end test of the packed package (every server on Node.js and Bun, both clients, the browser example, Vite, Astro and the website in Chromium and WebKit). `make bench` compares the providers; `make start` serves the website. [ARCH.md](ARCH.md) explains the design for contributors.
 
 ## License
 

@@ -11,6 +11,10 @@
  * and `rpcRoute` in a bare `Bun.serve`, the baseline for what a provider and the HTTP layer cost. Compression is off on
  * both sides, so the numbers measure transport, not zlib.
  *
+ * Memory: the server process's resident set size (RSS, from `ps`), once idle after start and every 100 ms under load;
+ * the table shows idle, the peak under the call load, and the peak over all four scenarios. Why RSS and not the JS
+ * heap: Node.js and Bun manage their heaps differently, and RSS is what the operating system bills either one for.
+ *
  * Why autocannon in a separate process from the servers: a load generator in the server's process competes for its
  * event loop and flatters nobody. Both still share this machine, so compare rows of one run, not runs of different
  * machines. VERIFIED: rows of different runs vary: Express on Node.js answered 25,653 and 38,915 calls/s in two runs
@@ -19,10 +23,11 @@
  * Results: output/bench/results.json and output/bench/results.md.
  */
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { arch, cpus, loadavg, platform, totalmem } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import autocannon from "autocannon";
 import { DSON } from "defuss-dson";
@@ -117,6 +122,30 @@ const stopServer = (child) =>
 		setTimeout(() => child.kill("SIGKILL"), 5000).unref();
 	});
 
+/** Resident set size of a process in MiB, from `ps` (macOS and Linux); undefined once the process is gone. */
+async function rssMiB(pid) {
+	try {
+		const { stdout } = await promisify(execFile)("ps", ["-o", "rss=", "-p", String(pid)]);
+		return Math.round(Number(stdout.trim()) / 1024);
+	} catch {
+		return undefined;
+	}
+}
+
+/** Samples a process's RSS every 100 ms until `stop()`, which resolves with the peak in MiB. */
+function sampleRss(pid) {
+	let peak = 0;
+	let running = true;
+	const done = (async () => {
+		while (running) {
+			peak = Math.max(peak, (await rssMiB(pid)) ?? 0);
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+		return peak;
+	})();
+	return { stop: () => ((running = false), done) };
+}
+
 /** One autocannon run; the warm-up run's numbers are discarded. */
 const load = (url, scenario, duration) =>
 	autocannon({ url: url + scenario.request.path, ...scenario.request, connections: scenario.connections, duration, workers: WORKERS });
@@ -139,12 +168,15 @@ await mkdir(OUTPUT, { recursive: true });
 for (const server of servers) {
 	const { child, url } = await startServer(server);
 	try {
-		const row = { server: server.label, provider: server.provider, runtime: server.runtime };
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		const row = { server: server.label, provider: server.provider, runtime: server.runtime, rssIdleMiB: await rssMiB(child.pid) };
 		for (const [name, scenario] of Object.entries(SCENARIOS)) {
 			const { method, headers, body, path } = scenario.request;
 			await scenario.check(await fetch(url + path, { method, headers, body }));
+			const memory = sampleRss(child.pid);
 			await load(url, scenario, 1);
 			const result = await load(url, scenario, DURATION);
+			const rssPeakMiB = await memory.stop();
 			const failures = result.errors + result.timeouts + result.non2xx;
 			assert.equal(failures, 0, `${server.label} ${name}: ${result.errors} errors, ${result.timeouts} timeouts, ${result.non2xx} non-2xx`);
 			row[name] = {
@@ -153,8 +185,9 @@ for (const server of servers) {
 				latencyP99Ms: result.latency.p99,
 				mebibytesPerSecond: Math.round((scenario.sentMiB ? result.requests.average * scenario.sentMiB : result.throughput.average / MiB) * 10) / 10,
 				requests: result.requests.total,
+				rssPeakMiB,
 			};
-			log(`${server.label} ${name}: ${row[name].requestsPerSecond} req/s p50=${row[name].latencyP50Ms}ms p99=${row[name].latencyP99Ms}ms ${row[name].mebibytesPerSecond} MiB/s`);
+			log(`${server.label} ${name}: ${row[name].requestsPerSecond} req/s p50=${row[name].latencyP50Ms}ms p99=${row[name].latencyP99Ms}ms ${row[name].mebibytesPerSecond} MiB/s rss=${rssPeakMiB}MiB`);
 		}
 		rows.push(row);
 	} finally {
@@ -171,11 +204,12 @@ const environment = {
 	settings: { durationSeconds: DURATION, connections: CONNECTIONS, transferConnections: Math.max(1, CONNECTIONS / 4), workers: WORKERS },
 };
 const table = [
-	"| Server | call req/s | call p50 / p99 ms | stream (100 frames) req/s | upload (1 MiB each) | download (8 MiB each) |",
-	"| --- | ---: | ---: | ---: | ---: | ---: |",
-	...rows.map((r) =>
-		`| ${r.server} | ${r.call.requestsPerSecond.toLocaleString("en-US")} | ${r.call.latencyP50Ms} / ${r.call.latencyP99Ms} | ${r.stream.requestsPerSecond.toLocaleString("en-US")} | ${r.upload.mebibytesPerSecond} MiB/s | ${r.download.mebibytesPerSecond} MiB/s |`,
-	),
+	"| Server | call req/s | call p50 / p99 ms | stream (100 frames) req/s | upload (1 MiB each) | download (8 MiB each) | RSS idle / calls / peak |",
+	"| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+	...rows.map((r) => {
+		const peak = Math.max(...Object.keys(SCENARIOS).map((name) => r[name].rssPeakMiB));
+		return `| ${r.server} | ${r.call.requestsPerSecond.toLocaleString("en-US")} | ${r.call.latencyP50Ms} / ${r.call.latencyP99Ms} | ${r.stream.requestsPerSecond.toLocaleString("en-US")} | ${r.upload.mebibytesPerSecond} MiB/s | ${r.download.mebibytesPerSecond} MiB/s | ${r.rssIdleMiB} / ${r.call.rssPeakMiB} / ${peak} MiB |`;
+	}),
 ].join("\n");
 const notes = `Measured ${environment.finishedAt} on ${environment.machine}; Node.js ${environment.node}, Bun ${environment.bun}; ${DURATION} s per scenario after 1 s warm-up, ${CONNECTIONS} connections (uploads and downloads ${environment.settings.transferConnections}), autocannon with ${WORKERS} worker threads on the same machine (load average ${loadBefore} before the run).`;
 await writeFile(join(OUTPUT, "results.json"), `${JSON.stringify({ environment, rows }, null, 2)}\n`);

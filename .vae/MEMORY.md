@@ -14,3 +14,4 @@ Budget 4 KiB (`vae.py doctor --repo .`); entries are injected at session start. 
 - VERIFIED[vitest 5 globalSetup] Vite's module runner crashes mapping stack traces of thrown errors ("code.charCodeAt is not a function"); src/test/browser-server.ts unsets Error.prepareStackTrace BC browser run 2026-11-01
 - VERIFIED[DSON wire] NDJSON lines are DSON's compact table encoding, not readable JSON BC curl of ChatApi.reply → examples/wire.ndjson
 - VERIFIED[make e2e] needs network: bun add in the consumer and defuss-shadcn 0.9.11 from jsDelivr for docs/ BC failed requests fail scripts/e2e.mjs
+- VERIFIED[astro 7.4.4 `astro dev` outside CI] a fresh project's npm update check writes .astro/settings.json, which restarts the dev server mid-request; tests set ASTRO_DISABLE_UPDATE_CHECK=true BC output/e2e/logs/astro.log "Configuration file updated" + dist/core/dev/update-check.js

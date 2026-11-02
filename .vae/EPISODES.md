@@ -44,3 +44,34 @@ Wrap: EVERY lead becomes a test | .vae/VERIFY.py rule | one MEMORY line with BC,
 2026-11-01T20:13:37Z s=be7f2ca9 FINDING integrations/*/package.json:devDependencies learn=verifier: the gate's package check enforces it
 2026-11-01T20:13:37Z s=be7f2ca9 FINDING integrations/vite/example/env.d.ts:3 learn=none: comment text; generated into the README, which the docs check keeps in sync
 2026-11-01T20:13:37Z s=be7f2ca9 FINDING Makefile:setup, integrations/*/package.json peerDependenciesMeta learn=verifier: .vae/checks/policy.py check_integrations keeps vite/astro out of the core and requires each package's lockfile, README, ARCH and example
+2026-11-01T20:38:46Z s=be7f2ca9 FAIL prose,tests.e2e.1
+2026-11-01T20:47:07Z s=be7f2ca9 DONE fp=2ef49e230a8c cov=90.9% paths=ARCH.md,Makefile,README.md,docs/assets/site.css(+7)
+2026-11-01T20:47:07Z s=be7f2ca9 FINDING scripts/e2e.mjs:start astro (ASTRO_DISABLE_UPDATE_CHECK) learn=memory: .vae/MEMORY.md line; the e2e itself fails if the restart returns
+2026-11-01T20:47:07Z s=be7f2ca9 FINDING scripts/e2e.mjs:finally (process cleanup) learn=none: diagnostic behavior of the test harness; no rule kind checks log presence after a failure
+2026-11-01T20:47:07Z s=be7f2ca9 FINDING scripts/e2e.mjs:watch pageerror learn=test: every other page error still fails the e2e
+2026-11-01T20:47:07Z s=be7f2ca9 FINDING scripts/serve.mjs:19 learn=none: comment drift; not mechanically checkable
+2026-11-01T20:47:07Z s=be7f2ca9 FINDING docs/index.html:387,390 T06; README.md Protocol table T06 learn=verifier: the gate's prose check enforces it
+2026-11-01T20:47:07Z s=be7f2ca9 FINDING scripts/docs.ts:highlightLines, codeText learn=none: documentation quality; the gate's docs stage reviews it
+2026-11-01T21:12:03Z s=be7f2ca9 DONE fp=f6165d566e06 cov=90.9% paths=ARCH.md,Makefile,README.md,docs/assets/site.css(+8)
+2026-11-01T21:12:03Z s=be7f2ca9 FINDING README.md:9, docs/index.html hero, package.json description learn=none: marketing claim accuracy; no rule kind can check it
+2026-11-01T21:19:52Z s=be7f2ca9 DONE fp=a2a45653de90 cov=90.9% paths=ARCH.md,Makefile,README.md,docs/assets/site.css(+9)
+2026-11-01T21:19:52Z s=be7f2ca9 FINDING scripts/bench.mjs:rssMiB, sampleRss, table learn=none: benchmark measurement; numbers vary per machine load, so no test may pin them
+2026-11-01T23:10:33Z s=be7f2ca9 DONE fp=9dd0a47e54ec cov=90.8% paths=ARCH.md,Makefile,README.md,docs/assets/site.css(+10)
+2026-11-01T23:10:33Z s=be7f2ca9 FINDING docs/src/site.ts copy buttons inside .diff learn=test: the e2e copy check fails if the fix is removed: the click would not reach the button
+2026-11-01T23:10:33Z s=be7f2ca9 FINDING scripts/docs.ts:region (nested regions) learn=verifier: make lint (docs --check) fails when README or the website drift from the regions
+2026-11-01T23:10:33Z s=be7f2ca9 FINDING examples/api.ts header learn=none: comment drift
+2026-11-01T23:10:33Z s=be7f2ca9 FINDING README.md Install/Serve it/Benchmark, docs/index.html hero/Serve it/#performance, ARCH.md:46 learn=none: benchmark numbers vary per run; no test may pin them
+2026-11-02T01:05:04Z s=be7f2ca9 FAIL prose
+2026-11-02T01:09:30Z s=be7f2ca9 DONE fp=501b49b812b8 cov=90.8% paths=ARCH.md,Makefile,README.md,docs/assets/site.css(+23)
+2026-11-02T01:09:30Z s=be7f2ca9 FINDING docs/index.html:761 T02 (runtimes table) learn=verifier: the gate's prose check (T02) already catches it; cells now read n/a
+2026-11-02T01:09:30Z s=be7f2ca9 FINDING docs/assets/site.css .rp-muted learn=none: dead CSS is not mechanically checked; one-off cleanup
+2026-11-02T01:09:30Z s=be7f2ca9 FINDING docs/index.html tables (performance, protocol, files, runtimes) learn=none: visual quality is reviewed by screenshot, not encodable as a rule
+2026-11-02T01:09:30Z s=be7f2ca9 FINDING examples/*.ts, integrations/*/example (long lines) learn=verifier: scripts/docs.ts shown() fails make lint for a line over 64 characters in a diff or 80 elsewhere
+2026-11-02T01:13:50Z s=be7f2ca9 DONE fp=2e463bc20847 cov=90.8% paths=ARCH.md,Makefile,README.md,docs/assets/site.css(+23)
+2026-11-02T01:24:48Z s=be7f2ca9 FAIL prose
+2026-11-02T01:29:12Z s=be7f2ca9 DONE fp=57df251bc4ba cov=90.8% paths=ARCH.md,CHANGELOG.md,Makefile,README.md(+28)
+2026-11-02T01:29:12Z s=be7f2ca9 FINDING src/client.test.ts:66 (restores DSON types) learn=test: the test now asserts the 1.2.0 contract: undefined, NaN, ±Infinity and -0 round-trip as results and arguments
+2026-11-02T01:29:12Z s=be7f2ca9 FINDING src/server.ts parseRpcCallDescriptor (trust boundary) learn=test: src/server.test.ts 'refuses DSON records that name a global…' fails below 1.2.0, so a downgrade cannot pass make test
+2026-11-02T01:29:12Z s=be7f2ca9 FINDING docs/assets/site.css .rp-hero-pill > a.badge learn=none: contrast is reviewed by light and dark screenshots; no rule kind expresses it
+2026-11-02T01:30:28Z s=be7f2ca9 DONE fp=5643493ec271 cov=90.8% paths=ARCH.md,CHANGELOG.md,Makefile,README.md(+28)
+2026-11-02T01:39:01Z s=be7f2ca9 DONE fp=d321ef9ecc00 cov=90.8% paths=ARCH.md,CHANGELOG.md,Makefile,README.md(+28)

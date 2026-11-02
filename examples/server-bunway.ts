@@ -18,7 +18,7 @@ const server = new ExpressRpcServer({
 	host: "127.0.0.1",
 	port: Number(process.env.PORT ?? 63920),
 });
-await server.start(); // logs: … INFO defuss-rpc rpc server listening url=http://127.0.0.1:63920 provider=bunway
+await server.start(); // listening at http://127.0.0.1:63920
 // #endregion server-bunway
 
 process.once("SIGTERM", () => void server.stop().then(() => process.exit(0)));

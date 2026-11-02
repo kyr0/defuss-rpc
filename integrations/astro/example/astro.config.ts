@@ -8,7 +8,14 @@ import { defussRpc } from "defuss-rpc-astro";
 import RpcApi from "./api.ts";
 
 export default defineConfig({
-	// No provider: the RPC server runs on Bun.serve, port 63920. On Node.js add `provider: expressProvider()`.
-	integrations: [defussRpc({ api: RpcApi, host: "127.0.0.1", watch: ["api.ts"] })],
+	// No provider: the RPC server runs on Bun.serve, port 63920.
+	// On Node.js add `provider: expressProvider()`.
+	integrations: [
+		defussRpc({
+			api: RpcApi,
+			host: "127.0.0.1",
+			watch: ["api.ts"],
+		}),
+	],
 });
 // #endregion astro-config

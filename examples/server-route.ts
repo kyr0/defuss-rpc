@@ -12,23 +12,33 @@ import "./hooks.ts";
 
 createRpcServer(RpcApi);
 
-// rpcRoute answers requests; CORS for browser pages on other origins is the server's job.
+// rpcRoute answers requests; CORS for browser pages on other
+// origins is the server's job.
 const cors = {
 	"Access-Control-Allow-Origin": "*",
-	"Access-Control-Expose-Headers": "Content-Disposition, X-File-Sha256, X-Upload-Offset",
+	"Access-Control-Expose-Headers":
+		"Content-Disposition, X-File-Sha256, X-Upload-Offset",
 };
 
 const server = Bun.serve({
 	hostname: "127.0.0.1",
 	port: Number(process.env.PORT ?? 63920),
-	idleTimeout: 120, // seconds; streams and upload progress keep a request open longer than Bun's default 10
+	// seconds: streams and upload progress keep a request open
+	// longer than Bun's default of 10
+	idleTimeout: 120,
 	async fetch(request) {
 		if (request.method === "OPTIONS") {
-			const allowHeaders = request.headers.get("Access-Control-Request-Headers") ?? "Content-Type";
-			return new Response(null, { headers: { ...cors, "Access-Control-Allow-Headers": allowHeaders } });
+			const allowHeaders =
+				request.headers.get("Access-Control-Request-Headers") ??
+				"Content-Type";
+			return new Response(null, {
+				headers: { ...cors, "Access-Control-Allow-Headers": allowHeaders },
+			});
 		}
 		const response = await rpcRoute({ request });
-		for (const [name, value] of Object.entries(cors)) response.headers.set(name, value);
+		for (const [name, value] of Object.entries(cors)) {
+			response.headers.set(name, value);
+		}
 		return response;
 	},
 });

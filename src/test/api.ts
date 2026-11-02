@@ -43,6 +43,8 @@ export const TestTypesModule = {
 	date: async () => new Date("2026-11-01T12:00:00.000Z"),
 	big: async () => 2n ** 64n,
 	nothing: async () => undefined,
+	/** What the server received: own keys and whether the prototype is Object.prototype (a decoded `__proto__` key). */
+	shape: async (value: object) => ({ keys: Object.keys(value), plainPrototype: Object.getPrototypeOf(value) === Object.prototype }),
 };
 
 /** Set when the server-side generator's `finally` ran, so tests can see that a cancelled stream stopped it. */

@@ -21,8 +21,15 @@ import { defussRpc } from "defuss-rpc-astro";
 import RpcApi from "./api.ts";
 
 export default defineConfig({
-  // No provider: the RPC server runs on Bun.serve, port 63920. On Node.js add `provider: expressProvider()`.
-  integrations: [defussRpc({ api: RpcApi, host: "127.0.0.1", watch: ["api.ts"] })],
+  // No provider: the RPC server runs on Bun.serve, port 63920.
+  // On Node.js add `provider: expressProvider()`.
+  integrations: [
+    defussRpc({
+      api: RpcApi,
+      host: "127.0.0.1",
+      watch: ["api.ts"],
+    }),
+  ],
 });
 ```
 <!-- /example -->
@@ -45,7 +52,8 @@ import { getRpcClient } from "defuss-rpc/client";
 import type { RpcApi } from "../../api.ts";
 
 const rpc = await getRpcClient<RpcApi>();
-document.querySelector("#sum")!.textContent = String(await rpc.MathApi.add(2, 3));
+const sum = await rpc.MathApi.add(2, 3);
+document.querySelector("#sum")!.textContent = String(sum);
 ```
 <!-- /example -->
 

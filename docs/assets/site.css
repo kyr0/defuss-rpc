@@ -1,60 +1,153 @@
-/* Page layout and the demo's composition. Colors, radii and shadows come from defuss-shadcn tokens. */
+/* Page layout and composition, adapted from the defuss-dson website. Colors, radii and shadows come from defuss-shadcn
+   tokens; nothing here redefines a component. */
 @layer components {
   *, *::before, *::after { box-sizing: border-box; }
   body { margin: 0; line-height: 1.6; background: var(--background); color: var(--foreground); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
   /* component rules set display, which would otherwise beat the hidden attribute */
   [hidden] { display: none !important; }
   .rp-page { overflow-x: clip; }
-  .rp-main { display: flex; flex-direction: column; align-items: center; gap: clamp(4.5rem, 10vw, 8rem); padding-block-end: clamp(4rem, 10vw, 8rem); }
+  .rp-main { display: flex; flex-direction: column; align-items: center; gap: clamp(5rem, 11vw, 9rem); padding-block-end: clamp(5rem, 11vw, 9rem); }
   .rp-section { width: 100%; max-width: 76rem; padding-inline: 1rem; scroll-margin-top: 5rem; }
+  /* A section is a column of groups with generous space between them; a group (a sub-heading and what it
+     introduces) keeps its parts close, so the eye reads each heading with its content, not with the one above. */
+  .rp-section:not(.mk-cta) { display: flex; flex-direction: column; gap: 3.5rem; }
+  .rp-group { display: flex; flex-direction: column; gap: 1.5rem; min-width: 0; }
+  /* "Get started": one leaf-cornered panel on a faint dot pattern (the defuss-dson site's "Use it") */
+  .rp-panel {
+    --shape-round: 3rem; --shape-ink: color-mix(in oklch, var(--foreground) 9%, transparent); --shape-pattern: 18px;
+    display: flex; flex-direction: column; gap: 3rem; padding: clamp(1.5rem, 4vw, 3rem); border: 1px solid var(--border);
+    background-color: color-mix(in oklch, var(--card) 75%, transparent);
+    box-shadow: var(--shadow-xl), 0 30px 80px -40px color-mix(in oklch, var(--chart-2) 45%, transparent);
+  }
+  .rp-panel > .mk-section-header { padding-inline: 0; margin-inline: 0; max-width: none; }
+  .rp-group-tight { gap: .75rem; margin-block-start: 1rem; }
+  .rp-lead { margin: 0; max-width: 46rem; color: var(--muted-foreground); text-wrap: pretty; }
+  /* section headers align with the content below them (the component pads itself for standalone use) */
+  :is(.rp-section, .rp-group) > .mk-section-header { padding-inline: 0; margin-inline: 0; max-width: none; }
+  .rp-group > .mk-section-header .mk-section-header-title { font-size: 1.375rem; }
+  .rp-badges { display: flex; flex-wrap: wrap; gap: .5rem; }
+  .rp-diagram-badge { justify-self: start; align-self: flex-start; width: fit-content; margin-block-end: .25rem; font-family: var(--font-sans); }
+  /* links in running text: the text's own color, underlined (as on the defuss-dson site) */
+  :is(.rp-section, .mk-hero-note, .mk-footer-copy) a:not(.btn, .badge) { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+  .mk-hero-desc code, .mk-section-header-desc code { font-family: var(--font-mono); font-size: .9em; }
+  /* section labels: a badge with an icon in place of the plain eyebrow text */
+  .rp-eyebrow { align-self: flex-start; gap: .375rem; }
   .rp-icon { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   .rp-ext { width: .75em; height: .75em; margin-inline-start: .15em; opacity: .75; }
   .rp-accent { background: linear-gradient(90deg, var(--chart-1), var(--chart-3)); -webkit-background-clip: text; background-clip: text; color: transparent; }
   :where(.rp-main) :not(pre) > code { font-family: var(--font-mono); font-size: .875em; }
 
-  .rp-hero { width: 100%; padding-block: clamp(4rem, 10vw, 7rem) 0; }
+  /* hero: a faint grid fading out from the centre and two blurred colour fields, as layers of defuss-shadcn's parallax */
+  .rp-hero { width: 100%; padding-block: clamp(4rem, 10vw, 7rem) 1rem; }
+  .rp-hero-grid { width: 100%; height: 100%; --shape-ink: color-mix(in oklch, var(--foreground) 7%, transparent); --shape-pattern: 32px;
+    mask-image: radial-gradient(55% 60% at 50% 45%, #000, transparent 75%); }
+  .rp-hero-glow { --parallax-speed: 22%; mask-image: linear-gradient(#000 55%, transparent 92%); }
+  .rp-hero-blob { position: absolute; aspect-ratio: 1; filter: blur(60px); }
+  .rp-hero-blob-1 { inset-block-start: 10%; inset-inline-start: 8%; width: min(22rem, 45%); opacity: .55;
+    background: color-mix(in oklch, var(--chart-4) 40%, transparent); }
+  .rp-hero-blob-2 { inset-block-start: 28%; inset-inline-end: 6%; width: min(18rem, 40%); opacity: .5;
+    background: color-mix(in oklch, var(--chart-2) 40%, transparent); }
+  .rp-flip { margin: 0; font-size: clamp(1.5rem, 4.5vw, 2.5rem); font-weight: 700; letter-spacing: -.03em; line-height: 1.15; }
+  .rp-hero-pill a { color: inherit; text-decoration: none; }
+  .rp-hero-pill > a.badge { color: var(--primary-foreground); }
+  .rp-npm-tag .badge { margin-inline-start: .125rem; }
+  .rp-hero-pill > a:last-child { display: inline-flex; align-items: center; gap: .5rem; }
+  .rp-hero-pill > a:last-child:hover { text-decoration: underline; text-underline-offset: 2px; }
   .rp-install { max-width: 22rem; margin-inline: auto; }
+  .rp-install-block { justify-self: start; width: min(100%, 30rem); margin: 0; }
+  /* Sequence diagrams scroll inside their figure on narrow screens (.diagram has overflow-x: auto). */
+  .rp-diagrams { display: grid; gap: 3rem; }
+  .rp-diagrams > .diagram { margin: 0; }
   .rp-intro { display: grid; gap: 2rem 2.25rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
-    width: 100%; max-width: 64rem; margin: clamp(3.5rem, 9vw, 6rem) auto 0; padding-inline: 1.25rem; text-align: start; }
+    width: 100%; max-width: 64rem; margin: clamp(5.5rem, 13vw, 10rem) auto 0; padding-inline: 1.25rem; text-align: start; }
   .rp-intro-item { display: flex; flex-direction: column; gap: .5rem; }
-  .rp-intro-icon { display: grid; place-items: center; width: 3.5rem; height: 3.5rem; border-radius: var(--radius-xl); font-size: 1.6rem;
-    background: color-mix(in oklch, var(--chart-2) 22%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--chart-2) 35%, transparent); }
+  .rp-intro-icon { display: grid; place-items: center; width: 4.5rem; height: 4.5rem; border-radius: var(--radius-xl); font-size: 2.25rem;
+    color: var(--foreground); background: color-mix(in oklch, var(--chart-2) 22%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--chart-2) 35%, transparent); }
   .rp-intro h3 { margin: .25rem 0 0; font-size: .9375rem; font-weight: 600; }
-  .rp-intro p { margin: 0; font-size: .875rem; color: var(--muted-foreground); text-wrap: pretty; }
+  .rp-intro p { margin: 0; font-size: .8125rem; line-height: 1.6; color: var(--muted-foreground); text-wrap: pretty; }
 
-  .rp-connection { margin-block: 2rem 1.5rem; }
-  .rp-connection-row { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
-  .rp-connection-row .input { flex: 1 1 16rem; min-width: 0; font-family: var(--font-mono); }
-  .rp-offline { margin: 0 1.5rem 1.5rem; }
-  .rp-demo-grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr)); }
-  .rp-stack { display: flex; flex-direction: column; gap: .9rem; }
-  .rp-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
-  .rp-row .input { flex: 1 1 6rem; min-width: 0; }
-  .rp-result { font-family: var(--font-mono); font-weight: 600; min-width: 4ch; }
-  .rp-stream { min-height: 3.2em; margin: 0; font-size: 1.05rem; }
-  .rp-stream span { animation: rp-in .25s ease-out; }
-  @keyframes rp-in { from { opacity: 0; transform: translateY(.2em); } }
-  .rp-muted { margin: 0; font-size: .8125rem; color: var(--muted-foreground); }
-  .rp-error { margin: 0; color: var(--destructive); font-size: .875rem; }
-  .rp-types td:last-child { font-family: var(--font-mono); font-size: .8125rem; overflow-wrap: anywhere; }
-  .rp-drop { display: flex; align-items: center; gap: .75rem; padding: 1rem; border: 1px dashed var(--border); border-radius: var(--radius-lg); cursor: pointer; font-size: .875rem; }
-  .rp-drop input { flex: 1; min-width: 0; font-size: .8125rem; }
-  .rp-progress { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: .4rem .75rem; }
-  .rp-facts { display: grid; grid-template-columns: auto 1fr; gap: .3rem .9rem; margin: 0; font-size: .8125rem; }
-  .rp-facts dt { color: var(--muted-foreground); }
-  .rp-facts dd { margin: 0; overflow-wrap: anywhere; }
-  .rp-preview { max-width: 100%; border-radius: var(--radius-lg); background: var(--muted); }
 
-  .rp-code { margin-block-start: 2.5rem; }
-  .rp-code-title { margin: 0 0 .75rem; font-size: 1rem; }
-  .rp-steps { margin-block-start: 2rem; }
+  .rp-steps { margin: 0; }
   .rp-steps .mk-process-step-body { min-width: 0; }
-  .rp-pair { display: grid; gap: 1.25rem; margin-block-start: 1.5rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr)); align-items: start; }
-  .rp-pair > .mk-code-block, .rp-steps .mk-code-block, .rp-code .mk-code-block { margin: 0; min-width: 0; }
+  .rp-steps .mk-code-block { margin: 0; min-width: 0; }
+  .rp-steps .tabs { margin-block-start: .5rem; }
+  .rp-steps .tab-content { margin-block-start: 1.25rem; }
+  .rp-flow { display: grid; gap: 1.5rem; margin-block-start: 2rem; }
+  .rp-flow[hidden] { display: none; }
+  /* Client and server code in defuss-shadcn's diff: the client block hugs the left edge, the server block the right, so
+     at the default divider (50%) a wide screen shows both in full and lines wrap; below 46rem each takes the full width
+     and the divider reveals one or the other. */
+  .rp-diff { container-type: inline-size; margin: 0; }
+  .rp-diff > :is(.diff-item-1, .diff-item-2) { display: grid; align-content: start; padding: 2.5rem .75rem .75rem; background-color: var(--muted); }
+  .rp-diff > .diff-item-2 { justify-items: end; }
+  .rp-diff .mk-code-block { margin: 0; min-width: 0; width: calc(50% - 1.25rem); }
+  @container (width < 46rem) { .rp-diff .mk-code-block { width: 100%; } }
   .mk-code-block code > span { white-space: pre-wrap; overflow-wrap: anywhere; }
   /* a blank source line is an empty span; without content it would take no height and the line would vanish */
   .mk-code-block code > span:empty::before { content: " "; }
-  .rp-note { max-width: 50rem; margin: 1rem 0 0; color: var(--muted-foreground); font-size: .875rem; }
-  .rp-table { margin-block-start: 1.5rem; }
-  .rp-table caption { text-align: start; margin-block-end: .5rem; font-weight: 600; }
+  .rp-note { max-width: 50rem; margin: 0; color: var(--muted-foreground); font-size: .875rem; }
+  /* wide tables scroll inside their box on narrow screens, never the page */
+  .rp-scroll { overflow-x: auto; }
+  .rp-scroll .table { margin: 0; }
+  .rp-scroll :is(.table-cell, .table-head) { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .rp-scroll .table-caption { caption-side: top; text-align: start; padding-block-end: .75rem; }
+  .rp-best > * { background-color: color-mix(in oklch, var(--chart-1) 9%, transparent); font-weight: 600; }
+
+  /* the headline numbers of the benchmark */
+  .rp-stats { margin: 0; padding: 0; list-style: none; }
+  .rp-stats .mk-stat-label { font-size: .875rem; line-height: 1.5; }
+
+  /* cards in a responsive grid: the upload events (three across) and the protocol layers (two across) */
+  .rp-cards { display: grid; gap: 1.25rem; margin: 0; padding: 0; list-style: none;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); }
+  .rp-cards-wide { grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr)); }
+  .rp-card .card-title { display: flex; align-items: center; gap: .5rem; font-size: 1.0625rem; }
+  .rp-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; }
+  .rp-card-meta a { font-size: .8125rem; }
+  .rp-chips { display: flex; flex-wrap: wrap; gap: .375rem; margin: .5rem 0; padding: 0; list-style: none; }
+  .rp-chips > li > code { display: inline-block; padding: .125rem .5rem; border-radius: var(--radius-md); background: var(--muted);
+    border: 1px solid var(--border); font-size: .75rem; }
+  /* the four layers of a request as a stack: one rule color per layer, the same in every card */
+  .rp-layers { display: grid; gap: .875rem; margin: 0; }
+  .rp-layer { --_tone: var(--chart-1); padding-inline-start: .875rem; border-inline-start: 3px solid var(--_tone); }
+  .rp-layer[data-layer="2"] { --_tone: var(--chart-2); }
+  .rp-layer[data-layer="3"] { --_tone: var(--chart-3); }
+  .rp-layer[data-layer="4"] { --_tone: var(--chart-4); }
+  .rp-layer > dt { font-size: .75rem; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: var(--muted-foreground); }
+  .rp-layer > dt code { text-transform: none; }
+  .rp-layer > dd { margin: .125rem 0 0; font-size: .875rem; text-wrap: pretty; }
+
+  /* the caveats of the benchmark as question cards, two across */
+  .rp-faq { padding-inline: 0; max-width: none; }
+  .rp-faq .mk-faq-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr)); }
+  .rp-faq .mk-faq-item { flex-direction: row; align-items: flex-start; }
+  @container mk-faq (width < 34rem) { .rp-faq .mk-faq-item { flex-direction: column; } }
+  .rp-faq .mk-faq-icon { width: 2.75rem; height: 2.75rem; }
+  .rp-faq .mk-faq-icon .rp-icon { width: 1.25rem; height: 1.25rem; }
+  .rp-faq .mk-faq-question { margin: 0; }
+  .rp-faq .mk-faq-answer { margin: .375rem 0 0; }
+
+  /* the runtimes: marks with a short note, the Bun column (the default) highlighted by the component */
+  .rp-compare .table-cell { vertical-align: top; }
+  .rp-compare thead .table-head { background: none; color: var(--foreground); text-align: center; }
+  .rp-compare thead .table-head:first-child { text-align: start; color: var(--muted-foreground); }
+  .rp-compare td .rp-cell { display: inline-flex; flex-direction: column; align-items: center; gap: .25rem; }
+  .rp-compare .rp-icon { width: 1.25rem; height: 1.25rem; stroke-width: 2.5; }
+  .rp-cell-note { font-size: .8125rem; line-height: 1.4; color: var(--muted-foreground); max-width: 16rem; text-wrap: pretty; }
+  .rp-na { color: var(--muted-foreground); font-size: .8125rem; }
+
+  /* footer: external links marked, the consulting panel the widest column on large screens */
+  .rp-icon-fill { fill: currentColor; stroke: none; }
+    @media (min-width: 64rem) { .rp-footer-nav.mk-footer-nav { grid-template-columns: 1fr 1fr 1.6fr; } }
+  .rp-ad {
+    --shape-round: 2rem; display: flex; flex-direction: column; gap: .875rem; padding: 1.25rem;
+    border: 1px solid var(--border); box-shadow: var(--shadow-lg);
+    background: linear-gradient(135deg, color-mix(in oklch, var(--chart-1) 16%, var(--card)), var(--card) 65%);
+  }
+  .rp-ad-head { display: flex; align-items: center; gap: .875rem; }
+  .rp-ad-portrait { width: 5.5rem; flex: none; }
+  .rp-ad-portrait img { display: block; width: 100%; height: auto; }
+  .rp-ad-name { margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--foreground); }
+  .rp-ad-role { margin: 0; font-size: .8125rem; line-height: 1.5; color: var(--muted-foreground); }
+  .rp-ad .btn { align-self: flex-start; }
 }

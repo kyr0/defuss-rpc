@@ -1,7 +1,7 @@
 {
   "name": "defuss-rpc",
   "version": "2.0.0",
-  "description": "Type-safe RPC for TypeScript over the Fetch API: classes and modules as APIs, async-generator streaming as NDJSON, DSON types (Date, Map, Set, BigInt, typed arrays), resumable binary uploads with SHA-256 and progress, downloads, hooks, and a standalone server on Bun.serve by default or on a provider of your choice (Express on Node.js and Bun, bunway on Bun); Vite and Astro integrations ship as defuss-rpc-vite and defuss-rpc-astro. The client runs in browsers, Node.js and Bun.",
+  "description": "defuss-rpc exposes server-side functions and classes as a fully typed, async client API, built from the server's schema at runtime.",
   "type": "module",
   "license": "MIT",
   "author": "Aron Homberg <info@aron-homberg.de>",
@@ -152,7 +152,7 @@
     "prepublishOnly": "make verify"
   },
   "dependencies": {
-    "defuss-dson": "^1.1.2"
+    "defuss-dson": "^1.2.0"
   },
   "peerDependencies": {
     "@types/express": ">=5.0.0",

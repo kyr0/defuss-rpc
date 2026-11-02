@@ -16,8 +16,8 @@ const TYPES = {
 
 /**
  * Serves the website (docs/) as GitHub Pages would: static files, `index.html` for directories, 404 otherwise.
- * `overrides` maps a URL path to a file served instead of docs/, which the e2e test uses to serve the site script
- * built from the installed package. VERIFIED: paths outside docs/ answer 403/404 (asserted in scripts/e2e.mjs).
+ * `overrides` maps a URL path to a file served instead of docs/, which the e2e test uses to serve examples/browser.ts
+ * bundled from the installed package. VERIFIED: paths outside docs/ answer 403/404 (asserted in scripts/e2e.mjs).
  */
 export async function serveSite({ port = 0, host = "127.0.0.1", overrides = {} } = {}) {
 	const base = resolve(ROOT, "docs");

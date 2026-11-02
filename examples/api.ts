@@ -1,6 +1,7 @@
 /**
- * The demo API of the README, the website and the e2e test. It runs unchanged on Node.js and Bun; the website's live
- * demo calls it from the browser.
+ * The demo API of the README, the website and the e2e test. It runs unchanged on Node.js and Bun; the website shows
+ * the regions `chat` and `types` beside the client code that calls them. VERIFIED: scripts/e2e.mjs serves it from
+ * every demo server and compares examples/client.ts's output with its comments.
  */
 // #region api
 /** A module: plain functions on one shared object. */
@@ -13,14 +14,21 @@ export const MathApi = {
 	},
 };
 
-/** A class: the server creates a fresh instance for every call, so fields never leak between requests. */
+/**
+ * A class: the server creates a fresh instance for every call, so
+ * fields never leak between requests.
+ */
 export class GreeterApi {
 	async greet(name: string) {
 		return `Hello, ${name}!`;
 	}
 }
 
-/** An async generator streams: the client receives every `yield` as it happens. */
+// #region chat
+/**
+ * An async generator streams: the client receives every `yield`
+ * as it happens.
+ */
 export const ChatApi = {
 	async *reply(prompt: string) {
 		for (const word of `You said: ${prompt}`.split(" ")) {
@@ -30,8 +38,13 @@ export const ChatApi = {
 		return "done";
 	},
 };
+// #endregion chat
 
-/** DSON keeps the types JSON loses: Date, Set, Map, BigInt, typed arrays. */
+// #region types
+/**
+ * DSON keeps the types JSON loses: Date, Set, Map, BigInt and
+ * typed arrays.
+ */
 export const TypesApi = {
 	async sample() {
 		return {
@@ -43,11 +56,13 @@ export const TypesApi = {
 		};
 	},
 };
+// #endregion types
 
 /** Which runtime answers: the same API runs on Node.js and Bun. */
 export const ServerInfo = {
 	async runtime() {
-		return process.versions.bun ? `Bun ${process.versions.bun}` : `Node.js ${process.versions.node}`;
+		const { bun, node } = process.versions;
+		return bun ? `Bun ${bun}` : `Node.js ${node}`;
 	},
 };
 

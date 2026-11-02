@@ -63,8 +63,10 @@ describe.for(PROVIDERS)("RPC client against ExpressRpcServer on $name", (provide
 		expect(await rpc.TestTypesModule.map()).toEqual(new Map([["a", 1], ["b", 2]]));
 		expect(await rpc.TestTypesModule.date()).toEqual(new Date("2026-11-01T12:00:00.000Z"));
 		expect(await rpc.TestTypesModule.big()).toBe(2n ** 64n);
-		// JSON has no top-level undefined: DSON sends it as null.
-		expect(await rpc.TestTypesModule.nothing()).toBeNull();
+		// defuss-dson 1.2.0 keeps what JSON turns into null: undefined, NaN, ±Infinity and -0, as results and arguments.
+		expect(await rpc.TestTypesModule.nothing()).toBeUndefined();
+		const special = { gone: undefined, numbers: [NaN, Infinity, -Infinity, -0] };
+		expect(await rpc.TestTypesModule.echo(special)).toStrictEqual(special);
 	});
 
 	it("throws with status and body for failed calls", async () => {

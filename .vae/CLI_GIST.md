@@ -9,4 +9,4 @@ Budget 2 KiB (`vae.py doctor --repo .`); entries are injected at session start. 
 - VERIFIED[integration tests] `make build && cd integrations/vite && bun run test` (or `test:bun`; same in integrations/astro after its build)
 - VERIFIED[one provider on Bun] `bunx --bun vitest run --project node src/express-server.test.ts -t bunway`
 - VERIFIED[bench subset] `make build && BENCH_DURATION=2 BENCH_ONLY="express on Bun,bunway on Bun" node scripts/bench.mjs`
-- VERIFIED[website] `make start` → http://127.0.0.1:4173/ (`SITE_PORT` overrides; demo server :63920, Bun); `?rpc=<url>` points the demo elsewhere; `make docs` after editing examples/ or docs/src/
+- VERIFIED[website] `make start` → http://127.0.0.1:4173/ (static, `SITE_PORT` overrides); `make docs` after editing examples/ or docs/src/

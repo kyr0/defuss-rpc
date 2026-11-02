@@ -43,7 +43,7 @@ A provider (`src/providers/*.ts`, contract in `src/provider.ts`) creates a frame
 
 Why providers instead of one built-in framework: the framework decides where the server runs. Express runs on Node.js and Bun; bunway exists only on `Bun.serve` (VERIFIED: Node.js cannot import bunway 1.1.0, whose files import each other without extensions) and answers small calls faster there (README.md, section Benchmark). With the framework behind a provider, `express-server.ts` imports neither, and an application loads only the one it imports.
 
-Why `Bun.serve` is the default and Node.js has none: the default needs no framework package, and it answered the most small calls of every `ExpressRpcServer` setup (VERIFIED: `make bench` on 2026-11-01, 25,112 calls per second against bunway's 20,616, inside that run's noise). A Node.js default would have to be Express, imported whether or not the application chose it, and what runs would depend on what is installed; the constructor throws on Node.js instead and names `expressProvider()`. The default provider sends every request through the core's `match()` instead of Bun's `routes`, so preflights for any path and CORS headers on the application's own responses (`getApp().fetch`) work as with the other providers. `.vae/checks/policy.py` fails when a module outside `src/providers/` imports a framework.
+Why `Bun.serve` is the default and Node.js has none: the default needs no framework package, and it answered the most small calls of every `ExpressRpcServer` setup and needed the least memory (VERIFIED: two `make bench` runs on 2026-11-01: 41,930 and 35,798 calls per second against bunway's 28,491 and 28,296, and 29 MiB idle and 57 to 59 MiB under calls against bunway's 36 to 37 and 65 to 66 MiB). A Node.js default would have to be Express, imported whether or not the application chose it, and what runs would depend on what is installed; the constructor throws on Node.js instead and names `expressProvider()`. The default provider sends every request through the core's `match()` instead of Bun's `routes`, so preflights for any path and CORS headers on the application's own responses (`getApp().fetch`) work as with the other providers. `.vae/checks/policy.py` fails when a module outside `src/providers/` imports a framework.
 
 Why the HTTP layer is written in Fetch terms and not `node:http`: bunway has no `node:http` request or response, while every `node:http` request converts to a `Request`. One implementation then serves both, so limits and compression cannot drift between providers. VERIFIED: the server suites (`src/express-server.test.ts`, `src/client.test.ts`, `src/download.test.ts`) run on every provider, on Node.js and on Bun (`make test`).
 
@@ -71,7 +71,9 @@ The client fetches `/rpc/schema` once per endpoint (`client.ts`, cached per `bas
 
 Class namespaces are instantiated per call, so instance fields cannot leak between users; module namespaces are shared. Names of `Object.prototype` and `constructor` are never dispatched, so only what the API author wrote is callable.
 
-Bodies are [DSON](https://github.com/kyr0/defuss-dson): JSON-compatible text that restores `Date`, `Map`, `Set`, `BigInt` and typed arrays. The server still accepts plain JSON call bodies from older clients.
+Bodies are [DSON](https://github.com/kyr0/defuss-dson): JSON-compatible text that restores `Date`, `Map`, `Set`, `BigInt`, typed arrays, and, from defuss-dson 1.2.0, `undefined`, `NaN`, `Infinity`, `-Infinity` and `-0`, which JSON turns into `null`. VERIFIED: `src/client.test.ts` ("restores DSON types") on every provider. The server still accepts plain JSON call bodies from older clients.
+
+Why defuss-rpc requires defuss-dson 1.2.0: the server decodes bodies from any client, and 1.2.0's `parse` no longer builds a global named by the input, takes no typed-array length from it, and keeps a `__proto__` key as an own property. VERIFIED: `src/server.test.ts` ("refuses DSON records that name a global or take a length from the body"); with 1.1.2 a call body carrying `["Function","return 1"]` ran the method with a function built from the request. A client with defuss-dson below 1.2.0 cannot read `NaN`, `±Infinity` or `-0` in an answer (record tag 9, defuss-dson's CHANGELOG); other values read the same in both versions.
 
 ## Streaming
 
@@ -119,7 +121,7 @@ In this repository each integration reaches defuss-rpc (and defuss-rpc-astro rea
 - Limits: `jsonSizeLimit` (default 1 MB) bounds call bodies; uploads have no size limit of their own: add a guard (see `examples/hooks.ts`).
 - State: upload sessions are in memory and temp files in `<os tmpdir>/defuss-uploads` (`setUploadDir()`); a successful handler run deletes its file, a failed one keeps it for a retry. Nothing expires abandoned uploads; clean the directory on deploy or restart.
 - Runtimes: without a provider the server runs on Bun only; the Express provider runs on Node.js 22, 24 and 26 (the versions CI tests) and on Bun, the bunway provider on Bun.
-- Ports: every server listens on 63920 unless given `port`; `make start` puts the demo server there and the website on 4173 (`SITE_PORT`).
+- Ports: every server listens on 63920 unless given `port`; `make start` serves the static website on 4173 (`SITE_PORT`).
 - Idle streams: VERIFIED on Bun 1.4.3: an NDJSON stream silent for 12 s, longer than `Bun.serve`'s 10 s default, reached the client complete on Express and bunway.
 
 ## Security
@@ -128,6 +130,7 @@ In this repository each integration reaches defuss-rpc (and defuss-rpc-astro rea
 - Upload IDs are reduced to `[a-zA-Z0-9._-]{1,128}` before they become file names, so they cannot leave the upload directory. VERIFIED: `src/upload.test.ts`.
 - `Content-Disposition` is built from an ASCII fallback plus the percent-encoded name, so a file name cannot inject header syntax.
 - `ExpressRpcServer` allows any CORS origin by default; with a list it echoes only listed origins (with `Vary: Origin`).
+- Call bodies are decoded by defuss-dson 1.2.0 or later, which refuses records that name a global or take an allocation size from the body (see Calls above).
 - Calls run only with `Content-Type: application/json`: a cross-origin page can send `text/plain` or form bodies without a CORS preflight, and those get 400 without running anything.
 
 ## Privacy

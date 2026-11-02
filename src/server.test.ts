@@ -82,6 +82,17 @@ describe("rpcRoute", () => {
 			}
 		});
 
+		// The server decodes untrusted bodies with defuss-dson, whose 1.2.0 "Security" fixes these cases. VERIFIED: with
+		// 1.1.2 the first body answered 200, so the method ran with a Function built from the request (2026-11-02).
+		it("refuses DSON records that name a global or take a length from the body, and keeps __proto__ an own key", async () => {
+			const echo = DSON.stringify({ className: "TestTypesModule", methodName: "echo", args: ["MARK"] });
+			for (const record of ['["Function","return 1"]', '["Float64Array",5e7]']) {
+				expect((await callRoute("", "", [], "/rpc", echo.replace('[0,"MARK"]', record))).status, record).toBe(400);
+			}
+			const shape = await callRoute("TestTypesModule", "shape", [JSON.parse('{"__proto__":{"admin":true}}')]);
+			expect(DSON.parse(await shape.text())).toEqual({ keys: ["__proto__"], plainPrototype: true });
+		});
+
 		it("answers 404 for unknown namespaces and methods", async () => {
 			const cases: [string, string, string][] = [
 				["Nope", "x", "Namespace Nope not found"],

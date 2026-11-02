@@ -5,7 +5,7 @@
     "": {
       "name": "defuss-rpc",
       "dependencies": {
-        "defuss-dson": "^1.1.2",
+        "defuss-dson": "^1.2.0",
       },
       "devDependencies": {
         "@types/bun": "^1.4.4",
@@ -412,7 +412,7 @@
 
     "deepmerge": ["deepmerge@4.3.1", "", {}, "sha512-3sUqbMEc77XqpdNO7FRyRog+eW3ph+GYCbj+rK+uYyRMuwsVy0rMiVtPn+QJlKFvWP/1PYpapqYn0Me2knFn+A=="],
 
-    "defuss-dson": ["defuss-dson@1.1.2", "", {}, "sha512-oO22rsRUZaA48yv17ffu2yV+a9wcZc73vVk4DZB+VTseKMvsLIFUjcotO9EE7+R41n7p8Aand1z6RbgHGlil3A=="],
+    "defuss-dson": ["defuss-dson@1.2.0", "", {}, "sha512-Zk9iPgDMR2z09MYngpb+ebRQzAymbPrMX86t+w3m5NkQqyfWpNid0KYW64Yt+rNOHkJxDIlWlXsqgqJdVSBqVA=="],
 
     "delayed-stream": ["delayed-stream@1.0.0", "", {}, "sha512-ZySD7Nf91aLB0RxL4KGrKHBXl7Eds1DAmEdcoVawXnLD7SDhpNgtuII2aAkg7a7QS41jxPSZ17p4VdGnMHk3MQ=="],
 

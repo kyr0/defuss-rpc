@@ -17,7 +17,8 @@ const endpoint = Astro.locals.rpcEndpoint;
       import type { RpcApi } from "../../api.ts";
 
       const rpc = await getRpcClient<RpcApi>();
-      document.querySelector("#sum")!.textContent = String(await rpc.MathApi.add(2, 3));
+      const sum = await rpc.MathApi.add(2, 3);
+      document.querySelector("#sum")!.textContent = String(sum);
       // #endregion astro-client
     </script>
   </body>

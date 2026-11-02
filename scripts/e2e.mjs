@@ -17,15 +17,19 @@
  *    stream matches examples/wire.ndjson; the Express example's own route answers next to the RPC routes.
  * 5. The Vite and Astro examples start their dev servers on Bun, whose RPC servers take the default provider and
  *    port 63920; Chromium sees the RPC result in the page.
- * 6. The website, with its script bundled from the installed package, is driven in Chromium and WebKit against
- *    every server: every demo, every code block (equal to its example region), anchors, theme, mobile layout,
- *    the offline state. Console errors, failed requests and HTTP errors fail the run.
+ * 6. examples/browser.ts, bundled by Bun from the consumer, uploads and downloads two files in Chromium and WebKit
+ *    against every server; the browser's SHA-256 equals the server's and the downloaded bytes' hash.
+ * 7. The website (static: no RPC server behind it) in Chromium and WebKit: every code block equals its example region
+ *    and is highlighted, the four sequence diagrams draw their wires, the client/server diffs move their divider, tabs,
+ *    anchors, the npm badges' version, theme toggle, a copy button inside a diff, the footer portrait,
+ *    mobile layout. Console errors, failed requests and HTTP errors fail the run.
  * Evidence: output/e2e/report.json, screenshots and process logs in output/e2e/.
  * VERIFIED: Node.js cannot import bunway 1.1.0 (its files import each other without extensions), so step 2 loads the
  * bunway entry point with Bun.
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { basename, join } from "node:path";
@@ -41,7 +45,7 @@ const OUTPUT = join(ROOT, "output/e2e");
 const pkg = JSON.parse(await readFile(join(ROOT, "package.json"), "utf8"));
 const checks = [];
 const processes = [];
-/** A 2×2 PNG, so the demo's image preview draws something. */
+/** A 2×2 PNG, the small file of the browser example's round trip. */
 const PNG = Buffer.from(
 	"iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP4z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg==",
 	"base64",
@@ -77,7 +81,7 @@ function start(name, command, args, { cwd = CONSUMER, env = {}, ready }) {
 		child.stderr.on("data", onData);
 		child.on("exit", (code) => {
 			clearTimeout(timer);
-			void writeFile(join(OUTPUT, "logs", `${name}.log`), log);
+			writeFileSync(join(OUTPUT, "logs", `${name}.log`), log);
 			reject(new Error(`${name} exited with ${code} before it was ready\n${log}`));
 		});
 	});
@@ -223,9 +227,13 @@ try {
 		await stopped(vite.child);
 
 		// --ignore-lock: Astro 7 moves `astro dev` into a detached background process when it detects a coding agent.
+		// ASTRO_DISABLE_UPDATE_CHECK: outside CI, a fresh project asks npm for the latest Astro and records the time in
+		// .astro/settings.json; the file watcher took that write for a config change and restarted the dev server while
+		// the page loaded (empty response). VERIFIED: astro 7.4.4 dist/core/dev/update-check.js and restart.js, log of
+		// the failing run (2026-11-01).
 		const astroPort = await freePort();
 		const astro = await start("astro", "bun", ["--bun", "node_modules/astro/bin/astro.mjs", "dev", "--ignore-lock", "--root", "integrations/astro/example", "--host", "127.0.0.1", "--port", String(astroPort)], {
-			env: { ASTRO_TELEMETRY_DISABLED: "1" },
+			env: { ASTRO_TELEMETRY_DISABLED: "1", ASTRO_DISABLE_UPDATE_CHECK: "true" },
 			ready: /Local\s+(http:\/\/127\.0\.0\.1:\d+\/)/,
 		});
 		await page.goto(astro.match[1]);
@@ -236,14 +244,18 @@ try {
 		await page.close();
 		await stopped(astro.child);
 
-		// 6. website -----------------------------------------------------------------------
-		const bundle = await Bun_build(join(CONSUMER, "docs/src/site.ts"));
-		const siteScript = join(WORK, "site.js");
-		await writeFile(siteScript, bundle);
-		const site = await serveSite({ overrides: { "/assets/site.js": siteScript } });
+		// 6. the browser example against every server, 7. the website (static: no server behind it) ----------------
+		const harness = await buildBrowserHarness();
+		const site = await serveSite({ overrides: harness });
 		try {
 			for (const path of ["/../package.json", "/%2e%2e/package.json", "/missing.html"]) {
 				assert.ok([403, 404].includes((await fetch(site.url + path)).status), `site server refuses ${path}`);
+			}
+			for (const [browserName, browser] of Object.entries(browsers)) {
+				for (const [server, { url }] of Object.entries(servers)) {
+					await runBrowserExample(browser, `${site.url}/browser-example.html?rpc=${encodeURIComponent(url)}`, `${browserName}/${server}`);
+					check(`examples/browser.ts in ${browserName} against ${server}: upload, download, SHA-256 equal`);
+				}
 			}
 			const html = await readFile(join(ROOT, "docs/index.html"), "utf8");
 			const sources = [...html.matchAll(/data-src="([^"#]+)(?:#([\w-]+))?"/g)].map(([, file, name]) => ({
@@ -251,12 +263,8 @@ try {
 				text: region(file, name),
 			}));
 			for (const [browserName, browser] of Object.entries(browsers)) {
-				for (const [server, { url, runtime }] of Object.entries(servers)) {
-					await driveSite({ browserName, browser, siteUrl: site.url, server, runtime, rpcUrl: url, sources });
-					check(`website in ${browserName} against the ${server} server: demos, ${sources.length} code blocks, anchors, layout`);
-				}
-				await offlineState(browser, site.url);
-				check(`website in ${browserName}: offline state without a server`);
+				const drawn = await driveSite({ browserName, browser, siteUrl: site.url, sources });
+				check(`website in ${browserName}: ${sources.length} code blocks equal examples, all highlighted, ${drawn} sequence diagrams drawn, anchors, layout`);
 			}
 		} finally {
 			site.server.close();
@@ -275,20 +283,71 @@ try {
 	await writeFile(join(OUTPUT, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
 	console.info(`${new Date().toISOString()} INFO e2e PASS checks=${checks.length} report=output/e2e/report.json`);
 } finally {
-	for (const child of processes) child.kill("SIGTERM");
+	// Wait for the exits: each one writes its process log to output/e2e/logs, also when a failure ends the run.
+	// SIGKILL after 5 s, as `make stop` does, so a server that ignores SIGTERM cannot hang the run.
+	const running = processes.filter((child) => child.exitCode === null && child.signalCode === null);
+	await Promise.all(
+		running.map((child) => new Promise((resolve) => {
+			child.once("exit", resolve);
+			child.kill("SIGTERM");
+			setTimeout(() => child.kill("SIGKILL"), 5_000).unref();
+		})),
+	);
 }
 
-/** Bundles the site script with Bun from the consumer, so the page runs the installed package's client. */
-async function Bun_build(entry) {
-	const out = join(WORK, "bundle");
-	run("bun", ["build", entry, "--target=browser", "--format=esm", "--minify", "--outdir", out], CONSUMER);
-	return readFile(join(out, "site.js"));
+/**
+ * A page that runs examples/browser.ts from the consumer, bundled by Bun with the installed client: a small PNG and
+ * a 3 MiB file with a name outside Latin-1 go up and come back. Returns the site server's overrides for it.
+ */
+async function buildBrowserHarness() {
+	const entry = join(CONSUMER, "browser-example.ts");
+	await writeFile(
+		entry,
+		`import { fetchFile, sendFile, sha256Hex } from "./examples/browser.ts";
+		const rpc = new URLSearchParams(location.search).get("rpc")!;
+		const png = Uint8Array.from(atob(${JSON.stringify(PNG.toString("base64"))}), (c) => c.charCodeAt(0));
+		async function roundTrip(file: File) {
+			const percent: Record<string, number> = {};
+			const done = await sendFile(file, rpc, (phase, value) => (percent[phase] = Math.max(percent[phase] ?? 0, value)));
+			const back = await fetchFile(done.result.id, rpc);
+			return { name: file.name, size: back.blob.size, filename: back.filename, percent, server: done.result.sha256, local: await sha256Hex(file), back: await sha256Hex(back.blob) };
+		}
+		(window as unknown as { done: Promise<unknown> }).done = (async () => [
+			await roundTrip(new File([png], "pixel.png", { type: "image/png" })),
+			await roundTrip(new File([new Uint8Array(3 * 1024 * 1024).fill(7)], "Übersicht 2026.bin")),
+		])();`,
+	);
+	const out = join(WORK, "harness");
+	run("bun", ["build", entry, "--target=browser", "--format=esm", "--outdir", out], CONSUMER);
+	const page = join(out, "browser-example.html");
+	await writeFile(page, `<!doctype html><meta charset="utf-8"><title>browser example</title><script type="module" src="/browser-example.js"></script>`);
+	return { "/browser-example.html": page, "/browser-example.js": join(out, "browser-example.js") };
+}
+
+/** Runs the browser example page against one server and checks both round trips. */
+async function runBrowserExample(browser, url, where) {
+	const page = await browser.newPage();
+	const { assertClean } = watch(page);
+	await page.goto(url);
+	const results = await page.evaluate(() => window.done);
+	for (const result of results) {
+		assert.equal(result.local, result.server, `${where} ${result.name}: the server's SHA-256 equals the browser's`);
+		assert.equal(result.back, result.local, `${where} ${result.name}: the downloaded bytes are the uploaded ones`);
+		assert.equal(result.filename, result.name, `${where}: the file name survives the round trip`);
+		assert.equal(result.percent.sending, 100, `${where} ${result.name}: sending reaches 100%`);
+	}
+	assertClean(where);
+	await page.close();
 }
 
 /** Tracks page errors, console errors, failed requests and HTTP errors; `assertClean()` fails on any. */
 function watch(page) {
 	const errors = [];
-	page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
+	// The diagrams of defuss-shadcn redraw their wires from a ResizeObserver; when that changes layout, browsers deliver
+	// the remaining notifications a frame later and report this message as an error event (Resize Observer spec, "loop
+	// completed with undelivered notifications"); nothing is lost. VERIFIED: WebKit reported it once while the website
+	// test resized the viewport to 390 px (2026-11-01); any other page error still counts.
+	page.on("pageerror", (error) => error.message !== "ResizeObserver loop completed with undelivered notifications." && errors.push(`pageerror: ${error.message}`));
 	page.on("console", (message) => message.type() === "error" && errors.push(`console: ${message.text()}`));
 	page.on("requestfailed", (request) => {
 		const reason = request.failure()?.errorText ?? "";
@@ -302,65 +361,43 @@ function watch(page) {
 	return { assertClean: (where) => assert.deepEqual(errors, [], where) };
 }
 
-async function driveSite({ browserName, browser, siteUrl, server, runtime, rpcUrl, sources }) {
+/** Drives the website and returns how many sequence diagrams it drew. */
+async function driveSite({ browserName, browser, siteUrl, sources }) {
 	const context = await browser.newContext();
 	if (browserName === "chromium") await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: siteUrl });
 	const page = await context.newPage();
 	const { assertClean } = watch(page);
-	await page.goto(`${siteUrl}/?rpc=${encodeURIComponent(rpcUrl)}`);
-	const where = `${browserName}/${server}`;
-	const shot = `site-${browserName}-${server.replace(/\W/g, "")}`;
+	await page.goto(siteUrl);
+	const where = browserName;
+	await page.screenshot({ path: join(OUTPUT, `site-${browserName}-top.png`) });
 
-	// connection and runtime badge
-	await page.locator("#server-status").filter({ hasText: `connected · ${runtime}` }).waitFor();
-	await page.screenshot({ path: join(OUTPUT, `${shot}-top.png`) });
-
-	// calls
-	await page.locator("#add-a").fill("40");
-	await page.locator("#add-b").fill("2");
-	await page.locator("#add-form button").click();
-	await page.locator("#add-result").filter({ hasText: "= 42" }).waitFor();
-	await page.locator("#greet-name").fill("Grace");
-	await page.locator("#greet-form button").click();
-	await page.locator("#greet-result").filter({ hasText: "Hello, Grace!" }).waitFor();
-
-	// streaming: every word is its own frame, then the return value
-	await page.locator("#stream-prompt").fill("one two three");
-	await page.locator("#stream-form button").click();
-	await page.locator("#stream-meta[data-frames='5']").waitFor();
-	assert.equal((await page.locator("#stream-output").textContent())?.trim(), "You said: one two three", where);
-	assert.match((await page.locator("#stream-meta").textContent()) ?? "", /return value "done"/, where);
-
-	// DSON types arrive as instances
-	await page.locator("#types-run").click();
-	await page.locator("#types-table").waitFor();
-	const types = await page.locator("#types-table tbody tr").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-type")));
-	assert.deepEqual(types, ["Date", "Set", "Map", "bigint", "Uint8Array"], where);
-
-	await page.locator("#demo").scrollIntoViewIfNeeded();
-	await page.screenshot({ path: join(OUTPUT, `${shot}-demo.png`) });
-
-	// file round trip: upload with progress, SHA-256 compared, download, preview
-	await page.locator("#file-input").setInputFiles({ name: "pixel.png", mimeType: "image/png", buffer: PNG });
-	await page.locator("#file-match").filter({ hasText: "match" }).waitFor();
-	await page.locator("#file-preview[data-drawn='true']").waitFor();
-	assert.match((await page.locator("#file-download").getAttribute("href")) ?? "", /^blob:/, where);
-	assert.equal(await page.locator("#file-download").getAttribute("download"), "pixel.png", where);
-	const large = Buffer.alloc(3 * 1024 * 1024, 7);
-	await page.locator("#file-input").setInputFiles({ name: "Übersicht 2026.bin", mimeType: "application/octet-stream", buffer: large });
-	await page.locator("#file-download").filter({ hasText: "Übersicht 2026.bin (3,145,728 bytes)" }).waitFor();
-	assert.equal(await page.locator("#file-match").textContent(), "match", where);
-	assert.equal(await page.locator("#recv-progress").evaluate((el) => el.value), 100, where);
-
-	// code blocks are the example regions, unchanged
+	// code blocks are the example regions, unchanged, and every block on the page is highlighted (shell ones too)
 	const shown = await page.locator("pre[data-src]").evaluateAll((pres) =>
 		pres.map((pre) => ({ src: pre.dataset.src, text: [...pre.querySelectorAll("code > span")].map((l) => l.textContent).join("\n") })),
 	);
-	assert.deepEqual(shown, sources.map(({ src, text }) => ({ src, text: text.replace(/\t/g, "  ") })), `${where}: code blocks equal examples/`);
+	assert.deepEqual(shown, sources.map(({ src, text }) => ({ src, text: text.replace(/\t/g, "  ") })), `${where}: code blocks equal their example files`);
+	const plain = await page.locator("pre").evaluateAll((pres) => pres.filter((pre) => !pre.querySelector("code > span > span[style*='color']")).map((pre) => pre.outerHTML.slice(0, 80)));
+	assert.deepEqual(plain, [], `${where}: every code block is highlighted`);
 
-	// copy button (Chromium grants clipboard access to tests)
+	// the sequence diagrams: diagram.js (in defuss-shadcn's all.min.js) draws the wires of every figure
+	const figures = await page.locator("figure.diagram[data-type='sequence']").count();
+	assert.equal(figures, 4, `${where}: four sequence diagrams`);
+	await page.waitForFunction(() => [...document.querySelectorAll("figure.diagram")].every((f) => (f.querySelector(".diagram-wires")?.childElementCount ?? 0) > 0));
+	await page.locator("#protocol").scrollIntoViewIfNeeded();
+	await page.screenshot({ path: join(OUTPUT, `site-${browserName}-protocol.png`) });
+
+	// the client/server diffs: the keyboard moves the divider (diff.js of defuss-shadcn sets --diff-pos)
+	const diffs = page.locator("figure.diff");
+	assert.equal(await diffs.count(), 6, `${where}: six client/server diffs`);
+	const filesDiff = page.locator("#files figure.diff");
+	await filesDiff.locator(".diff-range").focus();
+	for (let i = 0; i < 3; i++) await page.keyboard.press("Shift+ArrowLeft");
+	assert.equal(await filesDiff.evaluate((figure) => figure.style.getPropertyValue("--diff-pos")), "20%", `${where}: the divider moves`);
+	await filesDiff.locator(".diff-range").fill("50");
+
+	// copy button inside a diff, on the server side (Chromium grants clipboard access to tests)
 	if (browserName === "chromium") {
-		const block = page.locator("#src-files .mk-code-block");
+		const block = page.locator("#files .diff-item-2 .mk-code-block");
 		await block.locator(".mk-code-block-copy").click();
 		await block.locator(".mk-code-block-status").filter({ hasText: "Copied" }).waitFor();
 		assert.equal(await page.evaluate(() => navigator.clipboard.readText()), sources.find((s) => s.src === "examples/files.ts#files").text, where);
@@ -376,26 +413,31 @@ async function driveSite({ browserName, browser, siteUrl, server, runtime, rpcUr
 	);
 	assert.deepEqual(missing, [], `${where}: anchors`);
 
+	// the footer's consulting panel: its portrait (lazy, so scrolled into view first) is served and decoded
+	const portrait = page.locator(".rp-ad img");
+	await portrait.scrollIntoViewIfNeeded();
+	await page.waitForFunction(() => {
+		const img = document.querySelector(".rp-ad img");
+		return img.complete && img.naturalWidth > 0;
+	});
+	assert.equal(await portrait.evaluate((img) => img.naturalWidth), 400, `${where}: footer portrait`);
+
+	// the npm badges (hero, header, menu sheet) name the version this page documents: package.json's
+	const { version } = JSON.parse(await readFile(join(ROOT, "package.json"), "utf8"));
+	const versions = await page.locator('[data-fact="version"]').allTextContents();
+	assert.deepEqual(versions, [`v${version}`, `v${version}`, `v${version}`], `${where}: npm badges`);
+
 	// theme toggle
 	const dark = await page.evaluate(() => document.documentElement.classList.contains("dark"));
 	await page.locator(".swap").first().click();
 	assert.equal(await page.evaluate(() => document.documentElement.classList.contains("dark")), !dark, `${where}: theme toggle`);
 
-	// phone width: no horizontal scrolling
+	// phone width: no horizontal scrolling (the diagrams scroll inside their figure)
 	await page.setViewportSize({ width: 390, height: 844 });
 	assert.ok(await page.evaluate(() => document.scrollingElement.scrollWidth <= window.innerWidth + 1), `${where}: no horizontal scroll at 390px`);
 	await page.setViewportSize({ width: 1280, height: 900 });
-	await page.screenshot({ path: join(OUTPUT, `${shot}-full.png`), fullPage: true });
+	await page.screenshot({ path: join(OUTPUT, `site-${browserName}-full.png`), fullPage: true });
 	assertClean(where);
 	await context.close();
-}
-
-/** Without a server the demo says how to start one and disables its controls. */
-async function offlineState(browser, siteUrl) {
-	const page = await browser.newPage();
-	await page.goto(`${siteUrl}/?rpc=${encodeURIComponent("http://127.0.0.1:9")}`);
-	await page.locator("#offline").waitFor({ state: "visible" });
-	assert.equal(await page.locator("#server-status").textContent(), "offline");
-	assert.ok(await page.locator("#add-form button").isDisabled());
-	await page.close();
+	return figures;
 }

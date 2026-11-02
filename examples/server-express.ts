@@ -18,9 +18,10 @@ const server = new ExpressRpcServer({
 	host: "127.0.0.1",
 	port: Number(process.env.PORT ?? 63920),
 });
-// Your own Express routes and middleware live on the same app; add them before start().
+// Your own Express routes and middleware live on the same app;
+// add them before start().
 server.getApp().get("/version", (_req, res) => void res.json({ version: 1 }));
-await server.start(); // logs: … INFO defuss-rpc rpc server listening url=http://127.0.0.1:63920 provider=express
+await server.start(); // listening at http://127.0.0.1:63920
 // #endregion server-express
 
 process.once("SIGTERM", () => void server.stop().then(() => process.exit(0)));

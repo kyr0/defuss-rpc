@@ -21,9 +21,16 @@ import { defineConfig } from "vite";
 import { defussRpc } from "defuss-rpc-vite";
 import RpcApi from "./api.ts";
 
-// No provider: the RPC server runs on Bun.serve, port 63920. On Node.js add `provider: expressProvider()`.
+// No provider: the RPC server runs on Bun.serve, port 63920.
+// On Node.js add `provider: expressProvider()`.
 export default defineConfig({
-  plugins: [defussRpc({ api: RpcApi, host: "127.0.0.1", watch: ["api.ts"] })],
+  plugins: [
+    defussRpc({
+      api: RpcApi,
+      host: "127.0.0.1",
+      watch: ["api.ts"],
+    }),
+  ],
 });
 ```
 <!-- /example -->
@@ -32,12 +39,15 @@ The page imports the virtual module once; after that, every client call goes to 
 
 <!-- example: integrations/vite/example/main.ts#vite-client -->
 ```ts
-import "virtual:defuss-rpc"; // registers the dev server's RPC endpoint as the default
+// registers the dev server's RPC endpoint as the default
+import "virtual:defuss-rpc";
 import { getRpcClient } from "defuss-rpc/client";
 import type { RpcApi } from "./api.ts";
 
-const rpc = await getRpcClient<RpcApi>(); // no baseUrl: the virtual module set it
-document.querySelector("#sum")!.textContent = String(await rpc.MathApi.add(2, 3));
+// no baseUrl: the virtual module set it
+const rpc = await getRpcClient<RpcApi>();
+const sum = await rpc.MathApi.add(2, 3);
+document.querySelector("#sum")!.textContent = String(sum);
 ```
 <!-- /example -->
 

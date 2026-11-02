@@ -12,6 +12,7 @@ Standalone repository with verification gates, a project website, server provide
 - defuss-express (uWebSockets.js) is no longer supported: it showed no clear gain over Express on Node.js in `make bench`, it does not load on Bun, and it stalled keep-alive connections after large uploads (see ARCH.md, section Providers).
 - `ExpressRpcServer.getApp()` returns the provider's app type (`ExpressRpcServer<App>`); without a provider, a `BunServeApp` whose `fetch` answers requests outside the RPC routes.
 - RPC calls with a body other than `Content-Type: application/json` get 400 instead of running with an empty body; unknown `Content-Encoding` gets 415.
+- defuss-dson 1.2.0: a method that returns `undefined` gives the client `undefined` instead of `null`, and `NaN`, `Infinity`, `-Infinity` and `-0` arrive as themselves instead of `null` or `0`. A client with defuss-dson below 1.2.0 cannot read those four numbers in an answer.
 
 ### Providers
 
@@ -37,6 +38,7 @@ Standalone repository with verification gates, a project website, server provide
 - Namespace proxies were thenables, so `await`ing a namespace sent a bogus `then` call.
 - The schema cache was shared across endpoints; it is now per `baseUrl`.
 - A failed resume left an orphan session; concurrent first requests in the Astro middleware could start two servers.
+- Security: call bodies are decoded by defuss-dson 1.2.0, which refuses records that build a global named in the body (with 1.1.2, `["Function","return 1"]` reached the method as a function) or take an allocation size from it, and keeps a `__proto__` key as an own property.
 
 ### Added
 

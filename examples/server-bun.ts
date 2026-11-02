@@ -13,15 +13,20 @@ import "./hooks.ts";
 
 createRpcServer(RpcApi);
 
-// No provider: Bun.serve, without a framework. On Node.js, select one (server-express.ts).
+// No provider: Bun.serve, without a framework. On Node.js, select
+// one (server-express.ts).
 const server = new ExpressRpcServer({
 	host: "127.0.0.1",
-	port: process.env.PORT ? Number(process.env.PORT) : undefined, // undefined: 63920
+	// undefined: the default port, 63920
+	port: process.env.PORT ? Number(process.env.PORT) : undefined,
 });
-// Requests outside the RPC routes go to one fetch handler (default: 404); add your own before start().
+// Requests outside the RPC routes go to one fetch handler (default:
+// 404); add your own before start().
 server.getApp().fetch = (request) =>
-	new URL(request.url).pathname === "/version" ? Response.json({ version: 1 }) : new Response("Not Found", { status: 404 });
-await server.start(); // logs: … INFO defuss-rpc rpc server listening url=http://127.0.0.1:63920 provider=bun
+	new URL(request.url).pathname === "/version"
+		? Response.json({ version: 1 })
+		: new Response("Not Found", { status: 404 });
+await server.start(); // listening at http://127.0.0.1:63920
 // #endregion server-bun
 
 process.once("SIGTERM", () => void server.stop().then(() => process.exit(0)));

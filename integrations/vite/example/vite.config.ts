@@ -7,8 +7,15 @@ import { defineConfig } from "vite";
 import { defussRpc } from "defuss-rpc-vite";
 import RpcApi from "./api.ts";
 
-// No provider: the RPC server runs on Bun.serve, port 63920. On Node.js add `provider: expressProvider()`.
+// No provider: the RPC server runs on Bun.serve, port 63920.
+// On Node.js add `provider: expressProvider()`.
 export default defineConfig({
-	plugins: [defussRpc({ api: RpcApi, host: "127.0.0.1", watch: ["api.ts"] })],
+	plugins: [
+		defussRpc({
+			api: RpcApi,
+			host: "127.0.0.1",
+			watch: ["api.ts"],
+		}),
+	],
 });
 // #endregion vite-config

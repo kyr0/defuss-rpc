@@ -57,32 +57,31 @@ test: ## Vitest: Node.js, Chromium and WebKit projects against real servers, the
 coverage: ## merged v8 coverage of the Node.js and Chromium projects (prints the All files table)
 	bun run coverage
 
-e2e: ## pack → clean consumer → Node.js and Bun servers and clients, Vite, Astro, website in Chromium + WebKit → output/e2e/
+e2e: ## pack → clean consumer → Node.js and Bun servers and clients, Vite, Astro, browser example + website in Chromium + WebKit → output/e2e/
 	bun run e2e
 
 verify: lint test coverage e2e ## what CI runs: every gate verb, cheapest first
 
-# Two services in one process group, both on Bun: the demo RPC server without a provider (Bun.serve, port 63920) and
-# the website (port 4173).
-# `make stop` ends both. Run `make build` first; the demo server imports the built package.
+# The website (docs/, static: no RPC server behind it) on Bun, port 4173. `make docs` after editing examples/ or
+# docs/src/ regenerates what it serves.
 SITE_PORT ?= 4173
 export SITE_PORT
 LOG = var/log/site
 PID = tmp/site.pid
 ALIVE = [ -f $(PID) ] && kill -0 "$$(cat $(PID))" 2>/dev/null
-RUN = bun examples/server-bun.ts & exec bun scripts/serve.mjs
+RUN = exec bun scripts/serve.mjs
 
-start: build ## website http://127.0.0.1:4173/ (SITE_PORT) + demo RPC server http://127.0.0.1:63920, detached
+start: ## website http://127.0.0.1:4173/ (SITE_PORT), detached
 	@mkdir -p var/log tmp
 	@if $(ALIVE); then echo "running pid=$$(cat $(PID))"; exit 0; fi; \
 	if command -v setsid >/dev/null 2>&1; then nohup setsid sh -c '$(RUN)' >>$(LOG).stdout 2>>$(LOG).stderr </dev/null & \
 	else set -m; nohup sh -c '$(RUN)' >>$(LOG).stdout 2>>$(LOG).stderr </dev/null & set +m; fi; \
 	echo $$! >$(PID); \
-	for i in $$(seq 50); do curl -sf -o /dev/null http://127.0.0.1:$(SITE_PORT)/ && curl -sf -o /dev/null http://127.0.0.1:63920/health && break; sleep 0.1; done; \
-	if $(ALIVE); then echo "running pid=$$(cat $(PID)) site=http://127.0.0.1:$(SITE_PORT)/ rpc=http://127.0.0.1:63920"; \
+	for i in $$(seq 50); do curl -sf -o /dev/null http://127.0.0.1:$(SITE_PORT)/ && break; sleep 0.1; done; \
+	if $(ALIVE); then echo "running pid=$$(cat $(PID)) site=http://127.0.0.1:$(SITE_PORT)/"; \
 	else kill -s TERM -- -$$(cat $(PID)) 2>/dev/null; rm -f $(PID); echo "dead; see: make log"; exit 1; fi
 
-# The whole process group, not only its leader: the demo server outlives a website that failed to start.
+# The whole process group, not only its leader, so no child of the service outlives it.
 stop: ## SIGTERM the service group, SIGKILL after 5 s
 	@if [ -f $(PID) ]; then p=$$(cat $(PID)); kill -s TERM -- -$$p 2>/dev/null || kill -s TERM $$p 2>/dev/null; \
 	i=0; while kill -0 -- -$$p 2>/dev/null && [ $$i -lt 50 ]; do sleep 0.1; i=$$((i+1)); done; \
