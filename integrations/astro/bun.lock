@@ -15,8 +15,8 @@
       },
       "peerDependencies": {
         "astro": ">=5.0.0",
-        "defuss-rpc": "^2.0.0",
-        "defuss-rpc-vite": "^2.0.0",
+        "defuss-rpc": "^3.0.0",
+        "defuss-rpc-vite": "^3.0.0",
       },
       "optionalPeers": [
         "defuss-rpc",

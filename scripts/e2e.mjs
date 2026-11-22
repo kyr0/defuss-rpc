@@ -14,7 +14,9 @@
  * 3. The demo servers of examples/ start: ExpressRpcServer without a provider (Bun.serve, Bun), on Express (Node.js
  *    and Bun) and on bunway (Bun), and `rpcRoute` in a hand-written Bun.serve (Bun).
  * 4. examples/client.ts runs on Node.js and Bun against every server and prints what its comments say; the raw
- *    stream matches examples/wire.ndjson; the Express example's own route answers next to the RPC routes.
+ *    stream matches examples/wire.ndjson; the Express example's own route answers next to the RPC routes. The
+ *    installed `defuss-rpc schema` CLI (bunx and node) reads examples/*.ts and lists exactly the namespaces and
+ *    methods a running server serves, also with `--endpoint`.
  * 5. The Vite and Astro examples start their dev servers on Bun, whose RPC servers take the default provider and
  *    port 63920; Chromium sees the RPC result in the page.
  * 6. examples/browser.ts, bundled by Bun from the consumer, uploads and downloads two files in Chromium and WebKit
@@ -203,6 +205,23 @@ try {
 		assert.equal(await raw.text(), wire, `examples/wire.ndjson is the ${server} server's stream`);
 		check(`${server} stream equals examples/wire.ndjson`);
 	}
+	// 4b. the installed CLI reads examples/ and describes exactly what a running server serves --------------------
+	const inventory = (schema) => schema.map((e) => [e.className ?? e.moduleName, Object.keys(e.methods)]);
+	const served = await (await fetch(`${servers["Express on Node.js"].url}/rpc/schema`, { method: "POST" })).json();
+	for (const [runtime, command] of [["Bun", ["bunx", "defuss-rpc"]], ["Node.js", ["node", "node_modules/defuss-rpc/dist/cli.mjs"]]]) {
+		const printed = JSON.parse(run(command[0], [...command.slice(1), "schema", "examples/*.ts"], CONSUMER));
+		assert.deepEqual(inventory(printed), inventory(served), `defuss-rpc schema on ${runtime}: the namespaces and methods the server serves`);
+		assert.equal(printed.find((e) => e.moduleName === "MathApi").methods.add.params.map((p) => p.type).join(","), "number,number");
+		await writeFile(join(OUTPUT, `rpc-docs.${runtime === "Bun" ? "bun" : "node"}.json`), JSON.stringify(printed, null, 2));
+	}
+	const checked = execFileSync("bunx", ["defuss-rpc", "schema", "examples/*.ts", "--endpoint", servers["Express on Node.js"].url], {
+		cwd: CONSUMER,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	assert.deepEqual(inventory(JSON.parse(checked)), inventory(served), "defuss-rpc schema --endpoint keeps the served inventory");
+	check(`defuss-rpc schema (bunx and node) over examples/*.ts: ${served.length} namespaces, the server's methods, JSDoc types; --endpoint agrees`);
+
 	for (const label of ["Express on Node.js", "Express on Bun", "no provider (Bun.serve) on Bun"]) {
 		assert.deepEqual(await (await fetch(`${servers[label].url}/version`)).json(), { version: 1 }, `${label}: getApp() route`);
 	}

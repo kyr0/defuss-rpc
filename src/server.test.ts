@@ -213,6 +213,82 @@ describe("rpcRoute", () => {
 	});
 });
 
+describe("the exposure rule and documented schemas", () => {
+	class Base {
+		inherited() {
+			return "base";
+		}
+	}
+	class Accounts extends Base {
+		field = () => "field";
+		/** listed */
+		async open(name: string) {
+			return `opened ${name}`;
+		}
+		get label() {
+			return "getter";
+		}
+	}
+	const Tools = Object.assign(Object.create({ hidden: () => "proto" }), { visible: () => "visible" });
+	beforeEach(async () => {
+		await clearRpcServer();
+	});
+	afterEach(() => clearRpcServer());
+
+	it("calls exactly what the schema lists: no inherited method, instance field, getter or prototype function", async () => {
+		createRpcServer({ Accounts, Tools });
+		const schema = await (await schemaRequest()).json();
+		expect(Object.keys(schema[0].methods)).toEqual(["open"]);
+		expect(Object.keys(schema[1].methods)).toEqual(["visible"]);
+		expect(DSON.parse(await (await callRoute("Accounts", "open", ["a"])).text())).toBe("opened a");
+		expect(DSON.parse(await (await callRoute("Tools", "visible")).text())).toBe("visible");
+		for (const [ns, method] of [["Accounts", "inherited"], ["Accounts", "field"], ["Accounts", "label"], ["Accounts", "toString"], ["Tools", "hidden"], ["Tools", "hasOwnProperty"]])
+			expect((await callRoute(ns, method)).status, `${ns}.${method}`).toBe(404);
+	});
+
+	it("merges the docs into /rpc/schema by name and keeps the runtime's async and generator flags", async () => {
+		createRpcServer(
+			{ Accounts, Tools },
+			{
+				docs: [
+					{
+						kind: "class",
+						className: "Accounts",
+						description: "Customer accounts.",
+						properties: {},
+						methods: {
+							open: {
+								async: false,
+								generator: true,
+								description: "Opens an account.",
+								params: [{ name: "name", type: "string", schema: { type: "string" }, description: "Its holder." }],
+								returns: { type: "string", schema: { type: "string" } },
+							},
+							inherited: { async: false, generator: false, description: "not exposed" },
+						},
+					},
+					{ kind: "module", moduleName: "Missing", methods: {} },
+				],
+			},
+		);
+		const [accounts, tools] = await (await schemaRequest()).json();
+		expect(accounts.description).toBe("Customer accounts.");
+		expect(accounts.methods).toEqual({
+			open: {
+				async: true,
+				generator: false,
+				description: "Opens an account.",
+				params: [{ name: "name", type: "string", schema: { type: "string" }, description: "Its holder." }],
+				returns: { type: "string", schema: { type: "string" } },
+			},
+		});
+		expect(tools).toEqual({ kind: "module", moduleName: "Tools", methods: { visible: { async: false, generator: false } } });
+		createRpcServer({});
+		createRpcServer({ Accounts });
+		expect((await (await schemaRequest()).json())[0].description, "{} forgets the docs").toBeUndefined();
+	});
+});
+
 describe("describeInstance", () => {
 	it("lists own methods, enumerable properties and marks cycles", () => {
 		class Base {

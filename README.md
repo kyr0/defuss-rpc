@@ -528,6 +528,20 @@ What the numbers show:
 
 `make bench` measures this on your machine: `scripts/bench.mjs` starts each server in its own process and loads it with [autocannon](https://github.com/mcollina/autocannon) for 5 s per scenario (`BENCH_DURATION`), after checking one answer of each. Compare rows of one run; the load generator shares the machine with the server.
 
+## API documentation
+
+`/rpc/schema` lists what a client may call; `defuss-rpc schema` adds what each call means. The CLI reads your TypeScript source, starts at every `createRpcServer(...)` call (and the `api` option of defuss-rpc-vite and defuss-rpc-astro), follows the registered value through imports, re-exports and `export default` to its classes and objects, and writes each exposed method with its JSDoc, its parameters, its return type (a generator's yield and return types) and a JSON Schema for each of them. Files that import nothing from defuss-rpc are skipped, and so are exports nobody registers.
+
+```sh
+bunx defuss-rpc schema "src/**/*.ts" --out rpc.docs.json        # write it
+bunx defuss-rpc schema "src/**/*.ts" --out rpc.docs.json --check  # CI: exit 1 when it is stale
+bunx defuss-rpc schema "src/**/*.ts" --endpoint http://localhost:63920  # check it against a running server
+```
+
+Hand the file to the server with `createRpcServer(RpcApi, { docs })` (for example `import docs from "./rpc.docs.json" with { type: "json" }`), and `/rpc/schema` carries the documentation next to the `async` / `generator` flags, which stay the server's own. A method the file names but the server does not expose is left out and logged. `--endpoint` fetches the running server's schema and keeps exactly what it serves: a method only the source has is left out, one only the server has stays undocumented, and each difference is a warning.
+
+Each method may carry `description`, `params` (`{ name, type, schema, optional, rest, description }`), `returns` and `yields` (`{ type, schema, description }`), `deprecated`, `throws` and `examples`, from the JSDoc tags of the same names (`@param`, `@returns`, `@yields`, `@deprecated`, `@throws`, `@example`); a namespace may carry `description`. The schemas follow JSON Schema 2020-12; a DSON value JSON has no type for keeps a JSON type and names its own in `x-dson` (`date`, `bigint`, `binary`, `map`, `set`), and a type without a JSON shape (a function, a recursive reference) becomes `{}` with a `$comment`. A value the analysis cannot follow - an API built by a function call, a computed namespace name - is reported with its file and line, never guessed. The CLI runs on ts-morph, which brings its own TypeScript compiler (6.0), so it also works in a project on TypeScript 7.
+
 ## Protocol
 
 Plain HTTP with four body formats: DSON for calls, NDJSON for generators and upload answers, raw bytes for files, Server-Sent Events for upload progress. `ExpressRpcServer` is the HTTP layer below; with `rpcRoute` in your own `Bun.serve` or an Astro route, your server takes its place.
@@ -628,14 +642,14 @@ sequenceDiagram
 
 | Method | Path | Answer |
 | --- | --- | --- |
-| any | `/rpc/schema` | JSON array of `{ kind: "class", className, methods, properties }` and `{ kind: "module", moduleName, methods }`, each method `{ async, generator }` |
+| any | `/rpc/schema` | JSON array of `{ kind: "class", className, methods, properties }` and `{ kind: "module", moduleName, methods }`, each method `{ async, generator }` plus the documentation of `createRpcServer(api, { docs })` ([API documentation](#api-documentation)) |
 | `POST` | `/rpc` | body `{ className, methodName, args }` (DSON or JSON); a DSON result or NDJSON frames |
 | `POST` | `/rpc/upload` | headers `X-Upload-Handler`, `X-Upload-Id`, `X-Original-Size`, `X-Upload-Offset`, `X-Original-Filename`, `Content-Encoding`; NDJSON `received` + `result` (201) or `error` (200) |
 | `HEAD` | `/rpc/upload/{uploadId}` | `X-Upload-Offset`, `X-Upload-Handler`, `X-Original-Size`, `X-Upload-Status`; 404 when unknown |
 | `GET` | `/rpc/upload/progress/{uploadId}` | Server-Sent Events: `progress`, then `complete` or `error` |
 | `GET` | `/rpc/download?handler=…&downloadId=…` | the file with `Content-Type`, `Content-Length`, `Content-Disposition`, `X-File-Sha256` |
 
-Status codes: 400 malformed call body (or a call without `Content-Type: application/json`), 403 a guard returned `false`, 404 unknown namespace, method or handler, 409 resume offset mismatch, 413 call body above `jsonSizeLimit`, 415 unknown `Content-Encoding`, 500 the method or handler threw (message in `error`). Names on `Object.prototype` and `constructor` are never callable.
+Status codes: 400 malformed call body (or a call without `Content-Type: application/json`), 403 a guard returned `false`, 404 unknown namespace, method or handler, 409 resume offset mismatch, 413 call body above `jsonSizeLimit`, 415 unknown `Content-Encoding`, 500 the method or handler threw (message in `error`). A class exposes the methods its own prototype declares and a module its own function properties - exactly what `/rpc/schema` lists; an inherited method, an instance field, a getter, a name on `Object.prototype` and `constructor` are never callable.
 
 ## Vibe coding
 
@@ -676,7 +690,7 @@ The project site [`docs/index.html`](docs/index.html) shows the same files, high
 
 ## Two things to know
 
-**Guards are your trust boundary.** Every exported method of a registered namespace is callable by anyone who reaches the server, with arguments the client chose. Authenticate and authorize in a server guard (it sees the raw `Request`), validate arguments in the method, and keep internal helpers out of the namespace object. `ExpressRpcServer` allows any CORS origin by default; set `corsOrigin` for a browser-facing production server.
+**Guards are your trust boundary.** Every method a registered namespace exposes is callable by anyone who reaches the server - a TypeScript `private` method too (`defuss-rpc schema` warns about it; a `#private` method is not exposed), with arguments the client chose. Authenticate and authorize in a server guard (it sees the raw `Request`), validate arguments in the method, and keep internal helpers out of the namespace object. `ExpressRpcServer` allows any CORS origin by default; set `corsOrigin` for a browser-facing production server.
 
 **Upload state lives in one process.** Temp files go to `<os tmpdir>/defuss-uploads` (`setUploadDir()` changes it) until the handler succeeded; sessions are kept in memory, so a resume must reach the same process, and a restart forgets unfinished uploads. Behind a load balancer, pin uploads to one instance.
 

@@ -69,7 +69,11 @@ Why there is no defuss-express or tinyhttp provider: both were measured as provi
 
 The client fetches `/rpc/schema` once per endpoint (`client.ts`, cached per `baseUrl`), then builds a caller per method: a single-response caller, or an async generator for methods the schema marks `generator: true`. The server classifies a method by its constructor name (`AsyncGeneratorFunction` etc.) in one function, `describeFn`, used for both the schema and the dispatch; so a method streams exactly when the client expects a stream. Why not "stream every iterable result": a `Uint8Array`, `Map` or `Set` result is iterable and would be streamed to a client that expects one value. VERIFIED: `src/server.test.ts` (round-trips DSON types).
 
-Class namespaces are instantiated per call, so instance fields cannot leak between users; module namespaces are shared. Names of `Object.prototype` and `constructor` are never dispatched, so only what the API author wrote is callable.
+Class namespaces are instantiated per call, so instance fields cannot leak between users; module namespaces are shared. One function, `exposedMethods`, decides what a namespace exposes, for the schema and the dispatcher alike: a class's own prototype methods, a module's own enumerable function properties. Why one rule: before 3.0 the schema listed own prototype methods while a call reached any callable member (inherited methods and instance fields too), so neither `/rpc/schema` nor a schema written from the source could say what a client may call. VERIFIED: `src/server.test.ts` ("calls exactly what the schema lists").
+
+## API documentation
+
+`defuss-rpc schema` (`src/cli.ts` over `src/analyze.ts`) writes the documented schema from the source. Why registration-aware: what is callable is the value passed to `createRpcServer()` (or the integrations' `api` option), not what a module exports, so the analysis starts at those calls and follows the value through imports, re-exports and object literals, then applies `exposedMethods`' rule statically. Why ts-morph and not an LSP client: the generator needs the type checker (resolved aliases, inferred return types, JSDoc tags), which a language server exposes only as editor features; ts-morph 28 brings its own TypeScript 6.0 compiler, so a project on TypeScript 7 (no JavaScript Compiler API in its package) is read too. A value the checker cannot follow is reported, never guessed. `--endpoint` checks the result against a running server's `/rpc/schema`, which is authoritative for what is callable and cheap to ask. `createRpcServer(api, { docs })` merges the file into `/rpc/schema` by name; the runtime flags stay the server's. VERIFIED: `src/analyze.test.ts`, `src/cli.test.ts`, and scripts/e2e.mjs runs the installed CLI with bunx and node over examples/ and compares it with a running server.
 
 Bodies are [DSON](https://github.com/kyr0/defuss-dson): JSON-compatible text that restores `Date`, `Map`, `Set`, `BigInt`, typed arrays, and, from defuss-dson 1.2.0, `undefined`, `NaN`, `Infinity`, `-Infinity` and `-0`, which JSON turns into `null`. VERIFIED: `src/client.test.ts` ("restores DSON types") on every provider. The server still accepts plain JSON call bodies from older clients.
 
@@ -126,7 +130,7 @@ In this repository each integration reaches defuss-rpc (and defuss-rpc-astro rea
 
 ## Security
 
-- Every function of a registered namespace is callable by any client that reaches the server; authorization belongs in a server guard, which receives the raw `Request`.
+- Every method a registered namespace exposes (`exposedMethods`) is callable by any client that reaches the server, a TypeScript `private` method included (`defuss-rpc schema` warns); authorization belongs in a server guard, which receives the raw `Request`.
 - Upload IDs are reduced to `[a-zA-Z0-9._-]{1,128}` before they become file names, so they cannot leave the upload directory. VERIFIED: `src/upload.test.ts`.
 - `Content-Disposition` is built from an ASCII fallback plus the percent-encoded name, so a file name cannot inject header syntax.
 - `ExpressRpcServer` allows any CORS origin by default; with a list it echoes only listed origins (with `Vary: Origin`).

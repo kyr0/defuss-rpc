@@ -23,6 +23,7 @@ import type {
 	RpcMethodDescriptor,
 	RpcRoute,
 	RpcSchemaEntry,
+	RpcServerOptions,
 	ServerHook,
 	UploadHandlerEntry,
 	UploadHandlerFn,
@@ -77,12 +78,15 @@ const registry = ((globalThis as Record<symbol, unknown>)[Symbol.for("defuss-rpc
 	uploadHandlers: new Map(),
 	downloadHandlers: new Map(),
 	hooks: [],
+	docs: new Map(),
 }) as {
 	entries: Map<string, RpcApiEntry>;
 	uploadHandlers: Map<string, UploadHandlerEntry>;
 	downloadHandlers: Map<string, DownloadHandlerEntry>;
 	hooks: ServerHook[];
+	docs: Map<string, RpcSchemaEntry>;
 };
+registry.docs ??= new Map();
 const { entries: rpcApiEntries, uploadHandlers, downloadHandlers, hooks } = registry;
 
 /**
@@ -137,13 +141,24 @@ function describeFn(fn: Function): RpcMethodDescriptor {
 	};
 }
 
-/** True when `name` may be called on an object whose property `name` holds `fn`. */
-function isCallableMember(name: string, fn: unknown): fn is Function {
-	return (
-		typeof fn === "function" &&
-		!RESERVED_NAMES.has(name) &&
-		fn !== (Object.prototype as unknown as Record<string, unknown>)[name]
-	);
+/**
+ * The exposure rule: the methods a namespace exposes, by name. A class exposes the functions its own prototype
+ * declares, a module its own enumerable function properties - nothing inherited, no getter, no reserved name.
+ *
+ * Why one function for the schema and the dispatcher: before 3.0 the schema listed own prototype methods while a call
+ * reached any callable member, inherited ones and instance fields included, so `/rpc/schema` (and a schema
+ * generated from the source) could not say what a client may call. Now both read this list.
+ */
+function exposedMethods(entry: RpcApiEntry): Map<string, Function> {
+	const methods = new Map<string, Function>();
+	const own = isRpcClass(entry) ? (entry.prototype as object) : entry;
+	const names = isRpcClass(entry) ? Object.getOwnPropertyNames(own) : Object.keys(own);
+	for (const name of names) {
+		if (RESERVED_NAMES.has(name)) continue;
+		const value = Object.getOwnPropertyDescriptor(own, name)?.value;
+		if (typeof value === "function") methods.set(name, value);
+	}
+	return methods;
 }
 
 /**
@@ -613,15 +628,38 @@ export function clearDownloadHandlers(): void {
  * @example
  * createRpcServer({ UserApi, OrderApi, MathUtils });
  */
-export function createRpcServer(ns: ApiNamespace) {
+export function createRpcServer(ns: ApiNamespace, options: RpcServerOptions = {}) {
 	if (Object.keys(ns).length === 0) {
 		rpcApiEntries.clear();
+		registry.docs.clear();
 		return;
 	}
 	if (rpcApiEntries.size > 0) return;
 	for (const [name, entry] of Object.entries(ns)) {
 		rpcApiEntries.set(name, entry);
 	}
+	for (const doc of options.docs ?? []) {
+		const name = doc.kind === "class" ? doc.className : doc.moduleName;
+		if (!rpcApiEntries.has(name)) {
+			log("WARN", "rpc docs name a namespace the server does not have", { namespace: name });
+			continue;
+		}
+		const exposed = exposedMethods(rpcApiEntries.get(name)!);
+		const unknown = Object.keys(doc.methods ?? {}).filter((method) => !exposed.has(method));
+		if (unknown.length) log("WARN", "rpc docs name methods the server does not expose", { namespace: name, methods: unknown.join(",") });
+		registry.docs.set(name, doc);
+	}
+}
+
+/** The documentation fields of a documented method, merged over the runtime descriptor (which keeps async / generator). */
+function documented(runtime: Record<string, RpcMethodDescriptor>, doc: RpcSchemaEntry | undefined) {
+	if (!doc?.methods) return runtime;
+	const methods: Record<string, RpcMethodDescriptor> = {};
+	for (const [name, descriptor] of Object.entries(runtime)) {
+		const { async: _async, generator: _generator, ...fields } = doc.methods[name] ?? ({} as RpcMethodDescriptor);
+		methods[name] = { ...descriptor, ...fields };
+	}
+	return methods;
 }
 
 /**
@@ -630,6 +668,7 @@ export function createRpcServer(ns: ApiNamespace) {
  */
 export async function clearRpcServer() {
 	rpcApiEntries.clear();
+	registry.docs.clear();
 	hooks.length = 0;
 	uploadHandlers.clear();
 	downloadHandlers.clear();
@@ -640,14 +679,23 @@ export async function clearRpcServer() {
 function buildSchema(): RpcSchemaEntry[] {
 	const schemaEntries: RpcSchemaEntry[] = [];
 	for (const [name, entry] of rpcApiEntries) {
+		const doc = registry.docs.get(name);
+		const description = doc?.description ? { description: doc.description } : {};
 		if (isRpcClass(entry)) {
 			const desc = describeInstance(entry.prototype) as {
 				methods: Record<string, RpcMethodDescriptor>;
 				properties: Record<string, unknown>;
 			};
-			schemaEntries.push({ kind: "class", className: name, methods: desc.methods, properties: desc.properties });
+			schemaEntries.push({
+				kind: "class",
+				className: name,
+				...description,
+				methods: documented(desc.methods, doc),
+				properties: desc.properties,
+			});
 		} else {
-			schemaEntries.push(describeModule(name, entry));
+			const desc = describeModule(name, entry);
+			schemaEntries.push({ ...desc, ...description, methods: documented(desc.methods, doc) });
 		}
 	}
 	return schemaEntries;
@@ -667,9 +715,8 @@ async function handleCall(request: Request): Promise<Response> {
 	if (!entry) return json(404, { error: `Namespace ${className} not found` });
 
 	const isClass = isRpcClass(entry);
-	const target = isClass ? (new entry() as Record<string, unknown>) : (entry as Record<string, unknown>);
-	const fn = target[methodName];
-	if (!isCallableMember(methodName, fn)) {
+	const fn = exposedMethods(entry).get(methodName);
+	if (!fn) {
 		return json(404, {
 			error: isClass
 				? `Method ${methodName} not found on class ${className}`
@@ -677,6 +724,7 @@ async function handleCall(request: Request): Promise<Response> {
 		});
 	}
 
+	const target = isClass ? (new entry() as Record<string, unknown>) : (entry as Record<string, unknown>);
 	let result: unknown;
 	try {
 		result = fn.apply(target, args);
@@ -759,9 +807,7 @@ export const rpcRoute: RpcRoute = async ({ request }) => {
 /** Describes a plain-object module's own enumerable functions for the schema. */
 export function describeModule(name: string, obj: RpcApiModule): RpcSchemaEntry {
 	const methods: Record<string, RpcMethodDescriptor> = {};
-	for (const key of Object.keys(obj)) {
-		if (typeof obj[key] === "function") methods[key] = describeFn(obj[key] as Function);
-	}
+	for (const [key, fn] of exposedMethods(obj)) methods[key] = describeFn(fn);
 	return { kind: "module", moduleName: name, methods };
 }
 
@@ -784,7 +830,8 @@ export function describeInstance(proto: unknown, seen = new WeakSet()): unknown 
 	const cls = (record.constructor as { name?: string } | undefined)?.name || "Object";
 	const methods: Record<string, RpcMethodDescriptor> = {};
 	for (const name of Object.getOwnPropertyNames(proto)) {
-		if (name !== "constructor" && typeof record[name] === "function") methods[name] = describeFn(record[name] as Function);
+		const value = Object.getOwnPropertyDescriptor(proto, name)?.value;
+		if (!RESERVED_NAMES.has(name) && typeof value === "function") methods[name] = describeFn(value);
 	}
 	const properties: Record<string, unknown> = {};
 	for (const key of Object.keys(proto)) {

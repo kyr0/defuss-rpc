@@ -26,12 +26,48 @@ export interface RpcMethodDescriptor {
 	async: boolean;
 	/** `true` for `function*` and `async function*`: the call returns NDJSON frames. */
 	generator: boolean;
+	/** What the method does: its JSDoc text. The fields below are documentation only; no call depends on them. */
+	description?: string;
+	/** The positional parameters, in call order. */
+	params?: RpcParamDoc[];
+	/** The resolved value of a call (a generator's `return` value). */
+	returns?: RpcValueDoc;
+	/** What a generator yields, one value per NDJSON frame. */
+	yields?: RpcValueDoc;
+	/** `@deprecated`: true, or the text that says what to use instead. */
+	deprecated?: true | string;
+	/** `@throws` lines: the errors a call can answer with. */
+	throws?: string[];
+	/** `@example` blocks, as written. */
+	examples?: string[];
+}
+
+/** A JSON Schema (draft 2020-12). Values DSON carries beyond JSON keep a JSON type and name theirs as `x-dson`. */
+export type RpcJsonSchema = { [key: string]: unknown };
+
+/** One documented value: a TypeScript type, its JSON Schema and its JSDoc text. */
+export interface RpcValueDoc {
+	/** The type as TypeScript prints it, e.g. `Promise<User[]>` unwrapped to `User[]`. */
+	type?: string;
+	schema?: RpcJsonSchema;
+	description?: string;
+}
+
+/** One documented parameter. */
+export interface RpcParamDoc extends RpcValueDoc {
+	name: string;
+	/** Optional (`name?:` or a default value): the call may leave it out. */
+	optional?: boolean;
+	/** A rest parameter (`...items`): every further argument. */
+	rest?: boolean;
 }
 
 /** Schema descriptor of a class-based RPC namespace, one entry of the array served at `/rpc/schema`. */
 export interface RpcClassSchema {
 	kind: "class";
 	className: string;
+	/** The class's JSDoc text (documentation only). */
+	description?: string;
 	methods: Record<string, RpcMethodDescriptor>;
 	properties: Record<string, unknown>;
 }
@@ -43,6 +79,8 @@ export interface RpcClassSchema {
 export interface RpcModuleSchema {
 	kind: "module";
 	moduleName: string;
+	/** The module's JSDoc text (documentation only). */
+	description?: string;
 	methods: Record<string, RpcMethodDescriptor>;
 }
 
@@ -64,6 +102,16 @@ export type RpcApiSchema = RpcSchemaEntry[];
  */
 export interface ApiNamespace {
 	[name: string]: RpcApiEntry;
+}
+
+/** Options of `createRpcServer()`. */
+export interface RpcServerOptions {
+	/**
+	 * Documentation for `/rpc/schema`: a schema written by `defuss-rpc schema` from the API's source. Its
+	 * descriptions, parameters and return types are merged into the runtime schema by namespace and method name;
+	 * a method the server does not expose is left out.
+	 */
+	docs?: RpcApiSchema;
 }
 
 /**

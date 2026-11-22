@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.0.0
+
+API documentation from the source, and one rule for what a client may call. The major version is for that rule; defuss-rpc-vite and defuss-rpc-astro move to 3.0.0 with it (unchanged, their peer range is ^3.0.0).
+
+### Breaking
+
+- One exposure rule for `/rpc/schema` and calls: a class exposes the methods its own prototype declares, a module its own enumerable function properties. A call to an inherited method, an instance field holding a function or a getter now answers 404, as a method the schema never listed; redeclare an inherited method on the subclass to expose it.
+
+### New
+
+- `defuss-rpc schema <files | globs>` (the package's `bin`): reads the TypeScript source with ts-morph, follows every `createRpcServer(...)` and `defussRpc({ api })` registration to its classes and objects and writes the documented schema - JSDoc, parameters, return and yield types, a JSON Schema each (`x-dson` for Date, BigInt, binary, Map, Set). `--out`, `--check` for CI, `--project`, and `--endpoint <url>` to keep exactly what a running server serves and warn on every difference.
+- Optional documentation fields in the schema format: a method's `description`, `params`, `returns`, `yields`, `deprecated`, `throws`, `examples`; a namespace's `description` (`RpcParamDoc`, `RpcValueDoc`, `RpcJsonSchema`).
+- `createRpcServer(api, { docs })` merges a generated schema into `/rpc/schema` by namespace and method name; a name the server does not expose is left out and logged.
+- Dependency: ts-morph 28 (the CLI only; the client and server entries do not import it).
+
 ## 2.0.0
 
 Standalone repository with verification gates, a project website, server providers, a benchmark, and fixes found by testing every documented example end to end. The major version is for the breaking changes below: the server runs on `Bun.serve` unless given a provider, Node.js needs one, and the default port is 63920.

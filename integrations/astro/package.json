@@ -1,6 +1,6 @@
 {
   "name": "defuss-rpc-astro",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Astro integration for defuss-rpc: the Vite plugin of defuss-rpc-vite in astro dev, plus Astro.locals.rpcEndpoint for server-rendered code and the server start in production.",
   "type": "module",
   "license": "MIT",
@@ -69,8 +69,8 @@
   },
   "peerDependencies": {
     "astro": ">=5.0.0",
-    "defuss-rpc": "^2.0.0",
-    "defuss-rpc-vite": "^2.0.0"
+    "defuss-rpc": "^3.0.0",
+    "defuss-rpc-vite": "^3.0.0"
   },
   "peerDependenciesMeta": {
     "defuss-rpc": {
