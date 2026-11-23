@@ -3,13 +3,13 @@
 ```mermaid
 flowchart LR
   vite["vite dev"] -- configureServer --> plugin["defussRpc() plugin"]
-  plugin -- "createRpcServer(api), start()" --> server["ExpressRpcServer (defuss-rpc), port 63920"]
+  plugin -- "new ExpressRpcServer({ rpc }), start()" --> server["ExpressRpcServer (defuss-rpc), port 63920"]
   plugin -- setRpcEndpoint --> state[("rpc-state on globalThis")]
   page["page: import 'virtual:defuss-rpc'"] -- "_setDefaultEndpoint(url)" --> client["defuss-rpc/client"]
   client -- "POST /rpc" --> server
 ```
 
-The plugin starts an `ExpressRpcServer` in `configureServer` and serves `virtual:defuss-rpc`, which calls `_setDefaultEndpoint()` with the running server's URL. It excludes `defuss-rpc` from dependency pre-bundling, so app code and the virtual module share one client module. A change to a watched file reloads the page. When Vite restarts after a change to `vite.config.ts` or its imports, `configureServer` replaces the API registry.
+The plugin starts an `ExpressRpcServer` in `configureServer` and serves `virtual:defuss-rpc`, which calls `_setDefaultEndpoint()` with the running server's URL. It excludes `defuss-rpc` from dependency pre-bundling, so app code and the virtual module share one client module. A change to a watched file reloads the page. When Vite restarts after a change to `vite.config.ts` or its imports, `configureServer` serves the `rpc` server of the new config. Why the plugin never closes `rpc`: the server belongs to the config that created it, which may hold it for its own calls; the plugin owns only the listener. With the deprecated `api` option the plugin empties and refills defuss-rpc's global server instead. VERIFIED: `src/index.test.ts` (the RPC server answers after Vite closed; the `api` option serves the global upload handlers).
 
 Why a separate server and not Vite middleware: the RPC server is the same `ExpressRpcServer` in development and production, with the same streaming, upload and CORS behavior, so `vite dev` is no special case.
 

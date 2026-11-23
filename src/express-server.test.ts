@@ -5,9 +5,9 @@ import { DSON } from "defuss-dson";
 import { createExpressRpcServer, DEFAULT_PORT, ExpressRpcServer, parseByteSize, type BunServeApp, type ExpressRpcServerOptions } from "./express-server.js";
 import type { RpcServerProvider } from "./provider.js";
 import { expressProvider } from "./providers/express.js";
-import { addUploadHandler, clearRpcServer, createRpcServer } from "./server.js";
+import { createRpcServer } from "./server.js";
 import { TestMathModule, TestStreamModule, TestUserApi } from "./test/api.js";
-import { isolateUploads, PROVIDERS, startServer } from "./test/server.js";
+import { PROVIDERS, startServer } from "./test/server.js";
 
 const API = { TestUserApi, TestMathModule, TestStreamModule };
 const onBun = Boolean(process.versions.bun);
@@ -43,13 +43,14 @@ describe("ExpressRpcServer options", () => {
 	});
 
 	it.runIf(onBun)("without a provider runs on Bun.serve", async () => {
-		createRpcServer(API);
-		const { server, url } = await createExpressRpcServer({ port: 0, host: "127.0.0.1" });
+		const rpc = createRpcServer(API);
+		const { server, url } = await createExpressRpcServer({ rpc, port: 0, host: "127.0.0.1" });
 		try {
 			expect(typeof server.getApp().fetch).toBe("function");
 			expect(DSON.parse(await (await fetch(`${url}/rpc`, json(callBody("TestMathModule", "add", [2, 3])))).text())).toBe(5);
 		} finally {
 			await server.stop();
+			await rpc.close();
 		}
 	});
 
@@ -70,22 +71,24 @@ describe("ExpressRpcServer options", () => {
 });
 
 describe.for(PROVIDERS)("ExpressRpcServer on $name", (provider: RpcServerProvider<unknown>) => {
-	async function serve(options: Omit<ExpressRpcServerOptions, "provider"> = {}) {
+	/** The RPC server behind the listener that `serve()` started last. */
+	let rpc = createRpcServer({});
+	async function serve(options: Omit<ExpressRpcServerOptions, "provider" | "rpc"> = {}) {
 		const started = await startServer(provider, API, options);
 		stop = started.stop;
+		rpc = started.rpc;
 		return started.url;
 	}
 
 	afterEach(async () => {
 		await stop?.();
 		stop = undefined;
-		await clearRpcServer();
 	});
 
 	it("binds a free port for port 0 and reports it", async () => {
-		createRpcServer(API);
-		const { server, port, url } = await createExpressRpcServer({ provider, host: "127.0.0.1", port: 0 });
-		stop = () => server.stop();
+		const rpc = createRpcServer(API);
+		const { server, port, url } = await createExpressRpcServer({ rpc, provider, host: "127.0.0.1", port: 0 });
+		stop = async () => (await server.stop(), await rpc.close());
 		expect(port).toBeGreaterThan(0);
 		expect(url).toBe(`http://127.0.0.1:${port}`);
 		expect(server.getPort()).toBe(port);
@@ -165,9 +168,8 @@ describe.for(PROVIDERS)("ExpressRpcServer on $name", (provider: RpcServerProvide
 
 	it("serves sequential 1 MiB uploads on one keep-alive connection", async () => {
 		// VERIFIED: a removed provider (defuss-express 0.3.5) stalled about a third of such uploads; any provider must not.
-		await isolateUploads();
 		const url = await serve({ host: "127.0.0.1" });
-		addUploadHandler("size", (data) => data.byteLength);
+		rpc.addUploadHandler("size", (data) => data.byteLength);
 		const agent = new Agent({ keepAlive: true, maxSockets: 1 });
 		try {
 			for (let i = 0; i < 12; i++) {
@@ -293,10 +295,9 @@ describe.for(PROVIDERS)("ExpressRpcServer on $name", (provider: RpcServerProvide
 		});
 	});
 
-	it("forwards upload, HEAD and progress routes to rpcRoute", async () => {
-		await isolateUploads();
+	it("forwards upload, HEAD and progress routes to the RPC server", async () => {
 		const url = await serve();
-		addUploadHandler("echo", (data) => data.byteLength);
+		rpc.addUploadHandler("echo", (data) => data.byteLength);
 		const upload = await fetch(`${url}/rpc/upload`, {
 			method: "POST",
 			headers: { "Content-Type": "application/octet-stream", "X-Upload-Handler": "echo", "X-Upload-Id": "x1", "X-Original-Size": "4" },
@@ -311,8 +312,8 @@ describe.for(PROVIDERS)("ExpressRpcServer on $name", (provider: RpcServerProvide
 	});
 
 	it("serves routes added with getApp() before start()", async () => {
-		createRpcServer(API);
-		const server = new ExpressRpcServer({ provider, port: 0 });
+		const rpc = createRpcServer(API);
+		const server = new ExpressRpcServer({ rpc, provider, port: 0 });
 		// Express and bunway share app.get(); the default provider takes one fetch handler. A typed provider gives
 		// getApp() the framework's type.
 		if (provider.name === "bun") {
@@ -323,7 +324,21 @@ describe.for(PROVIDERS)("ExpressRpcServer on $name", (provider: RpcServerProvide
 			app.get("/custom", (_req, res) => res.json({ custom: true }));
 		}
 		const { url } = await server.start();
-		stop = () => server.stop();
+		stop = async () => (await server.stop(), await rpc.close());
 		expect(await (await fetch(`${url}/custom`)).json()).toEqual({ custom: true });
+	});
+
+	it("stop() leaves the RPC server open, and a new listener serves the same one", async () => {
+		const rpc = createRpcServer(API);
+		const add = (url: string) => fetch(`${url}/rpc`, json(callBody("TestMathModule", "add", [1, 2])));
+		const first = new ExpressRpcServer({ rpc, provider, host: "127.0.0.1", port: 0 });
+		await first.start();
+		await first.stop();
+		const second = new ExpressRpcServer({ rpc, provider, host: "127.0.0.1", port: 0 });
+		const { url } = await second.start();
+		stop = async () => (await second.stop(), await rpc.close());
+		expect(DSON.parse(await (await add(url)).text())).toBe(3);
+		await rpc.close();
+		expect((await add(url)).status, "a closed RPC server answers 503 through a running listener").toBe(503);
 	});
 });

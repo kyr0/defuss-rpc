@@ -10,7 +10,7 @@ defuss-rpc exposes them to the client as a fully typed, async API: the client bu
 
 ## TL;DR
 
-You don't need a schema language, a code generator or a REST layer to call your server. Export an object of classes and modules, register it with `createRpcServer()`, serve `rpcRoute`, and call `getRpcClient<typeof RpcApi>()` on the client: the client fetches the schema once, builds a caller per method and types each one from your server code.
+You don't need a schema language, a code generator or a REST layer to call your server. Export an object of classes and modules, pass it to `createRpcServer()`, serve the server it returns, and call `getRpcClient<typeof RpcApi>()` on the client: the client fetches the schema once, builds a caller per method and types each one from your server code.
 
 Features:
 - 🧩 Classes and modules as APIs: a class gets a fresh instance per call, a module is shared; no decorators, no IDL
@@ -19,7 +19,7 @@ Features:
 - 🧬 Types JSON loses: `Date`, `Map`, `Set`, `BigInt`, `Uint8Array` and every typed array, plus `undefined`, `NaN`, `±Infinity` and `-0`, as arguments and results
 - 📦 Files of any size: uploads stream to disk with SHA-256, gzip, Server-Sent Events progress and resume after a dropped connection; downloads carry name, type and hash
 - 🛡️ Hooks at both ends: server guards answer 403 before a method runs; client hooks add headers, metrics and checks around every call
-- 🌐 One Fetch handler: `rpcRoute` serves `Bun.serve` and Astro routes as it is; `ExpressRpcServer` adds CORS, gzip, limits and health checks
+- 🌐 One Fetch handler per server: `createRpcServer()` returns an endpoint whose `fetch` serves `Bun.serve` and Astro routes as it is, and two servers in one process share nothing; `ExpressRpcServer` adds CORS, gzip, limits and health checks
 - 🔌 Bun first: without a provider `ExpressRpcServer` runs on `Bun.serve` at port 63920, and in `make bench` it answered the most calls with the least memory; import Express (Node.js and Bun) or bunway (Bun) as its provider only when you need one
 - ⚡ Vite and Astro, optional: the packages defuss-rpc-vite and defuss-rpc-astro start the RPC server beside `vite dev` and `astro dev` and tell the client where it is; defuss-rpc needs neither
 - 🧪 Tested where it runs: Vitest in Node.js, Bun, Chromium and WebKit on every provider, plus an end-to-end run of the packed package and every documented example on Node.js and Bun
@@ -121,21 +121,24 @@ export type RpcApi = typeof RpcApi;
 
 ### 2. Serve it
 
-`ExpressRpcServer` serves every endpoint with CORS, gzip, body limits and `/health`. Without a provider it runs on `Bun.serve` and listens on port 63920:
+`createRpcServer(RpcApi)` returns the RPC server: your namespaces with hooks and upload and download handlers of their own, and no listener. `ExpressRpcServer` listens for it, with CORS, gzip, body limits and `/health`. Without a provider it runs on `Bun.serve` and listens on port 63920:
 
 <!-- example: examples/server-bun.ts#server-bun -->
 ```ts
 import { createRpcServer } from "defuss-rpc/server";
 import { ExpressRpcServer } from "defuss-rpc/express-server";
 import RpcApi from "./api.ts";
-import "./files.ts";
-import "./hooks.ts";
+import { addFileHandlers } from "./files.ts";
+import { addUploadLimit } from "./hooks.ts";
 
-createRpcServer(RpcApi);
+const rpc = createRpcServer(RpcApi);
+addFileHandlers(rpc);
+addUploadLimit(rpc);
 
 // No provider: Bun.serve, without a framework. On Node.js, select
 // one (server-express.ts).
 const server = new ExpressRpcServer({
+  rpc,
   host: "127.0.0.1",
   // undefined: the default port, 63920
   port: process.env.PORT ? Number(process.env.PORT) : undefined,
@@ -158,12 +161,15 @@ import { createRpcServer } from "defuss-rpc/server";
 import { ExpressRpcServer } from "defuss-rpc/express-server";
 import { expressProvider } from "defuss-rpc/providers/express";
 import RpcApi from "./api.ts";
-import "./files.ts";
-import "./hooks.ts";
+import { addFileHandlers } from "./files.ts";
+import { addUploadLimit } from "./hooks.ts";
 
-createRpcServer(RpcApi);
+const rpc = createRpcServer(RpcApi);
+addFileHandlers(rpc);
+addUploadLimit(rpc);
 
 const server = new ExpressRpcServer({
+  rpc,
   provider: expressProvider(), // Express 5 on node:http: Node.js and Bun
   host: "127.0.0.1",
   port: Number(process.env.PORT ?? 63920),
@@ -184,21 +190,23 @@ await server.start(); // listening at http://127.0.0.1:63920
 
 Numbers from one `make bench` run (2026-11-02, see [Benchmark](#benchmark)): small calls per second and the server process's resident memory, idle and under that load.
 
-Each has a runnable file: [`server-bun.ts`](examples/server-bun.ts), [`server-express.ts`](examples/server-express.ts), [`server-bunway.ts`](examples/server-bunway.ts). On Node.js there is no default: the constructor throws and names `expressProvider()`, because a default there would have to import a framework the application did not choose. `server.getApp()` returns the provider's app for your own routes, as both examples above show. Every server listens on port 63920 (`DEFAULT_PORT`) unless you pass `port`; `0` picks a free one.
+Each has a runnable file: [`server-bun.ts`](examples/server-bun.ts), [`server-express.ts`](examples/server-express.ts), [`server-bunway.ts`](examples/server-bunway.ts). On Node.js there is no default: the constructor throws and names `expressProvider()`, because a default there would have to import a framework the application did not choose. `server.getApp()` returns the provider's app for your own routes, as both examples above show. Every server listens on port 63920 (`DEFAULT_PORT`) unless you pass `port`; `0` picks a free one. `server.stop()` stops the listener and leaves `rpc` open, so a new listener can serve it; `rpc.close()` ends the RPC server ([Several servers in one process](#several-servers-in-one-process)).
 
-A `Bun.serve` you already run can mount `rpcRoute` itself, a plain Fetch handler; the CORS headers are then yours to add:
+A `Bun.serve` you already run can mount the RPC server itself: `rpc.fetch` is a plain Fetch handler, bound to its server, and `rpc.matches(request)` tells which requests are its. What `ExpressRpcServer` adds is then yours to add: CORS headers, a size limit for call bodies, and the `Content-Type: application/json` check, without which a page on another origin can run a call with a `text/plain` POST that needs no CORS preflight. The example adds the CORS headers:
 
 <!-- example: examples/server-route.ts#server-route -->
 ```ts
-import { createRpcServer, rpcRoute } from "defuss-rpc/server";
+import { createRpcServer } from "defuss-rpc/server";
 import RpcApi from "./api.ts";
-import "./files.ts";
-import "./hooks.ts";
+import { addFileHandlers } from "./files.ts";
+import { addUploadLimit } from "./hooks.ts";
 
-createRpcServer(RpcApi);
+const rpc = createRpcServer(RpcApi);
+addFileHandlers(rpc);
+addUploadLimit(rpc);
 
-// rpcRoute answers requests; CORS for browser pages on other
-// origins is the server's job.
+// rpc.fetch answers RPC requests; CORS for browser pages on other
+// origins is the host's job.
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Expose-Headers":
@@ -220,7 +228,10 @@ const server = Bun.serve({
         headers: { ...cors, "Access-Control-Allow-Headers": allowHeaders },
       });
     }
-    const response = await rpcRoute({ request });
+    if (!rpc.matches(request)) {
+      return new Response("Not Found", { status: 404 });
+    }
+    const response = await rpc.fetch(request);
     for (const [name, value] of Object.entries(cors)) {
       response.headers.set(name, value);
     }
@@ -230,7 +241,7 @@ const server = Bun.serve({
 ```
 <!-- /example -->
 
-In an Astro project without the integration, the same handler is a route: `export const ALL = rpcRoute;` in `src/pages/rpc/[...all].ts`.
+In an Astro project without the integration, the same handler is a route: `export const ALL: APIRoute = ({ request }) => rpc.fetch(request);` in `src/pages/rpc/[...all].ts`.
 
 ### 3. Call it
 
@@ -298,43 +309,44 @@ A top-level `undefined` result arrives as `null`, as in JSON.
 
 ## Files
 
-Register handlers by name on the server. A buffered handler gets a `Uint8Array`; `addStreamingUploadHandler()` hands over a `ReadableStream` that reads the stored upload in 256 KiB chunks, for files larger than memory.
+Register handlers by name on a server. A buffered handler gets a `Uint8Array`; `rpc.addStreamingUploadHandler()` hands over a `ReadableStream` that reads the stored upload in 256 KiB chunks, for files larger than memory.
 
 <!-- example: examples/files.ts#files -->
 ```ts
-import {
-  addDownloadHandler,
-  addUploadHandler,
-} from "defuss-rpc/server";
+import type { RpcServer } from "defuss-rpc/server";
 
 interface StoredFile {
   data: Uint8Array;
   name: string;
 }
 
-/** The last 20 files: a demo must not grow without bound. */
-const files = new Map<string, StoredFile>();
+/** The demo's upload and download handlers, named "file". */
+export function addFileHandlers(rpc: RpcServer) {
+  /** The last 20 files: a demo must not grow without bound. */
+  const files = new Map<string, StoredFile>();
 
-addUploadHandler("file", (data, meta) => {
-  const { uploadId: id, originalFilename, sha256 } = meta;
-  const name = originalFilename || `${id}.bin`;
-  files.set(id, { data, name });
-  if (files.size > 20) files.delete(files.keys().next().value!);
-  return { id, size: data.byteLength, sha256 };
-});
+  rpc.addUploadHandler("file", (data, meta) => {
+    const { uploadId: id, originalFilename, sha256 } = meta;
+    const name = originalFilename || `${id}.bin`;
+    files.set(id, { data, name });
+    const oldest = files.keys().next().value!;
+    if (files.size > 20) files.delete(oldest);
+    return { id, size: data.byteLength, sha256 };
+  });
 
-addDownloadHandler("file", ({ downloadId }) => {
-  const file = files.get(downloadId);
-  if (!file) throw new Error(`Unknown file ${downloadId}`);
-  return {
-    data: file.data,
-    fileMeta: {
-      size: file.data.byteLength,
-      contentType: "application/octet-stream",
-      filename: file.name,
-    },
-  };
-});
+  rpc.addDownloadHandler("file", ({ downloadId }) => {
+    const file = files.get(downloadId);
+    if (!file) throw new Error(`Unknown file ${downloadId}`);
+    return {
+      data: file.data,
+      fileMeta: {
+        size: file.data.byteLength,
+        contentType: "application/octet-stream",
+        filename: file.name,
+      },
+    };
+  });
+}
 ```
 <!-- /example -->
 
@@ -406,26 +418,28 @@ export async function fetchFile(id: string, baseUrl: string) {
 
 `upload()` options: `baseUrl`, `compression` (`"auto"` default and `"gzip"` use `CompressionStream`, `"none"` for already compressed data), `chunkSize` (256 KiB), `uploadId` (pass the ID of an interrupted upload to resume: the client asks `HEAD /rpc/upload/{id}` for the stored size and sends only the rest), `signal`, `headers`, `progress` (`false` skips the SSE stream) and `originalFilename` (any Unicode; sent percent-encoded). `uploadComplete()` resolves with the final result only.
 
-Download handlers return a `Uint8Array` or `{ data, fileMeta }` (`size`, `contentType`, `filename`, `sha256`, `lastModified`); `addStreamingDownloadHandler()` returns `{ stream, fileMeta }`. `download()` resolves with the bytes in `data` plus `filename`, `contentType` and the handler's `sha256`; `downloadAsBlob()` returns a `Blob`. Neither uses `setHeaders()`: pass `headers` per call.
+Download handlers return a `Uint8Array` or `{ data, fileMeta }` (`size`, `contentType`, `filename`, `sha256`, `lastModified`); `rpc.addStreamingDownloadHandler()` returns `{ stream, fileMeta }`. `download()` resolves with the bytes in `data` plus `filename`, `contentType` and the handler's `sha256`; `downloadAsBlob()` returns a `Blob`. Neither uses `setHeaders()`: pass `headers` per call.
 
 ## Hooks
 
 <!-- example: examples/hooks.ts#hooks -->
 ```ts
-import { addHook } from "defuss-rpc/server";
+import type { RpcServer } from "defuss-rpc/server";
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
 // Guards run before every call, upload and download; returning
 // false answers HTTP 403. For uploads the namespace is
 // "__upload__" and args[0] is the size the client announced.
-addHook({
-  phase: "guard",
-  fn: (namespace, _method, args) => {
-    if (namespace !== "__upload__") return true;
-    return Number(args[0]) <= MAX_UPLOAD_BYTES;
-  },
-});
+export function addUploadLimit(rpc: RpcServer) {
+  rpc.addHook({
+    phase: "guard",
+    fn: (namespace, _method, args) => {
+      if (namespace !== "__upload__") return true;
+      return Number(args[0]) <= MAX_UPLOAD_BYTES;
+    },
+  });
+}
 ```
 <!-- /example -->
 
@@ -458,6 +472,7 @@ bun add defuss-rpc-astro defuss-rpc-vite   # Astro
 ```ts
 import { defineConfig } from "vite";
 import { defussRpc } from "defuss-rpc-vite";
+import { createRpcServer } from "defuss-rpc/server";
 import RpcApi from "./api.ts";
 
 // No provider: the RPC server runs on Bun.serve, port 63920.
@@ -465,7 +480,7 @@ import RpcApi from "./api.ts";
 export default defineConfig({
   plugins: [
     defussRpc({
-      api: RpcApi,
+      rpc: createRpcServer(RpcApi),
       host: "127.0.0.1",
       watch: ["api.ts"],
     }),
@@ -478,6 +493,7 @@ export default defineConfig({
 ```ts
 import { defineConfig } from "astro/config";
 import { defussRpc } from "defuss-rpc-astro";
+import { createRpcServer } from "defuss-rpc/server";
 import RpcApi from "./api.ts";
 
 export default defineConfig({
@@ -485,7 +501,7 @@ export default defineConfig({
   // On Node.js add `provider: expressProvider()`.
   integrations: [
     defussRpc({
-      api: RpcApi,
+      rpc: createRpcServer(RpcApi),
       host: "127.0.0.1",
       watch: ["api.ts"],
     }),
@@ -496,12 +512,29 @@ export default defineConfig({
 
 Their READMEs show the client side and list the options.
 
+## Several servers in one process
+
+Every `createRpcServer()` call returns a server of its own: its namespaces, schema docs, hooks, upload and download handlers, upload sessions and temp files belong to it alone. Two servers may use the same namespace names and upload IDs, each with its own implementation, and each answers only from its own state.
+
+| Member | What it does |
+| --- | --- |
+| `fetch(request)` | answers one request; bound to its server, so `Bun.serve({ fetch: rpc.fetch })` works as it is |
+| `matches(request)` | true for the requests `fetch` answers: `…/rpc/schema`, `POST …/rpc`, `POST …/rpc/upload`, `HEAD …/rpc/upload/{id}`, `GET …/rpc/upload/progress/{id}`, `GET …/rpc/download`; never a CORS preflight |
+| `addHook()`, `addUploadHandler()`, `addStreamingUploadHandler()`, `addDownloadHandler()`, `addStreamingDownloadHandler()` | register on this server only |
+| `uploadDir` | the directory of its upload temp files: `<os tmpdir>/defuss-uploads/<random UUID>`, unless the `uploadDir` option names one |
+| `name` | `"defuss-rpc"`, or the `name` option |
+| `close()` | ends this server: later requests get 503, running generator streams end with an `error` frame (their `finally` blocks run), progress streams end with an `error` event, and its temp files are deleted, with the default upload directory |
+
+`close()` ends nothing else: another server, a listener that serves this one, and the process keep running. In turn `ExpressRpcServer.stop()` leaves its RPC server open. A server has `name`, `matches`, `fetch` and `close`, the members of a defuss-serve plugin; defuss-rpc does not depend on defuss-serve.
+
+VERIFIED: `src/instances.test.ts` runs two servers in one process with overlapping namespace names, separate hooks, schemas and docs, concurrent uploads with one upload ID, progress streams and `close()`, also behind two listeners on Express and, on Bun, bunway; `scripts/e2e.mjs` serves a server of the CommonJS build through the ESM build's `ExpressRpcServer` and the other way round, on Node.js and Bun.
+
 ## Runtimes
 
 | Part | Browsers | Node.js 22, 24, 26 | Bun |
 | --- | --- | --- | --- |
 | Client: calls, streams, uploads, downloads | Chromium, WebKit | yes | yes |
-| `rpcRoute` (Fetch handler) | n/a | yes | yes, with `Bun.serve` |
+| `rpc.fetch` (Fetch handler) | n/a | yes | yes, with `Bun.serve` |
 | `ExpressRpcServer` without a provider | n/a | no: the constructor throws and names `expressProvider()` | yes, on `Bun.serve` |
 | `ExpressRpcServer` on `expressProvider()` | n/a | yes | yes |
 | `ExpressRpcServer` on `bunwayProvider()` | n/a | no: bunway runs on `Bun.serve` | yes |
@@ -530,7 +563,7 @@ What the numbers show:
 
 ## API documentation
 
-`/rpc/schema` lists what a client may call; `defuss-rpc schema` adds what each call means. The CLI reads your TypeScript source, starts at every `createRpcServer(...)` call (and the `api` option of defuss-rpc-vite and defuss-rpc-astro), follows the registered value through imports, re-exports and `export default` to its classes and objects, and writes each exposed method with its JSDoc, its parameters, its return type (a generator's yield and return types) and a JSON Schema for each of them. Files that import nothing from defuss-rpc are skipped, and so are exports nobody registers.
+`/rpc/schema` lists what a client may call; `defuss-rpc schema` adds what each call means. The CLI reads your TypeScript source, starts at every `createRpcServer(...)` call (and the deprecated `registerGlobalRpcApi(...)` and `api` option of defuss-rpc-vite and defuss-rpc-astro), follows the registered value through imports, re-exports and `export default` to its classes and objects, and writes each exposed method with its JSDoc, its parameters, its return type (a generator's yield and return types) and a JSON Schema for each of them. Files that import nothing from defuss-rpc are skipped, and so are exports nobody registers. The file documents namespaces by name: when two servers of one project use the same namespace name, both get the documentation of the first registration the CLI finds.
 
 ```sh
 bunx defuss-rpc schema "src/**/*.ts" --out rpc.docs.json        # write it
@@ -544,14 +577,14 @@ Each method may carry `description`, `params` (`{ name, type, schema, optional, 
 
 ## Protocol
 
-Plain HTTP with four body formats: DSON for calls, NDJSON for generators and upload answers, raw bytes for files, Server-Sent Events for upload progress. `ExpressRpcServer` is the HTTP layer below; with `rpcRoute` in your own `Bun.serve` or an Astro route, your server takes its place.
+Plain HTTP with four body formats: DSON for calls, NDJSON for generators and upload answers, raw bytes for files, Server-Sent Events for upload progress. `ExpressRpcServer` is the HTTP layer below; with `rpc.fetch` in your own `Bun.serve` or an Astro route, your server takes its place.
 
 | Layer | Calls | Generators | Uploads | Downloads |
 | --- | --- | --- | --- | --- |
 | your code and the client | typed values: `Date`, `Map`, `Set`, `BigInt`, typed arrays | `for await` over the values | an async iterator of `sending`, `receiving`, `complete` | `{ data, filename, sha256 }` or a Blob |
 | wire (HTTP) | `POST /rpc`: DSON text as `application/json` | `application/x-ndjson`: one DSON frame per line, `yield`, then `return` or `error` | `POST /rpc/upload`: raw bytes (`application/octet-stream`, gzip) and `X-Upload-*` headers; progress as Server-Sent Events with JSON data; the answer as NDJSON | `GET /rpc/download`: raw bytes; `Content-Disposition` (RFC 6266) and `X-File-Sha256` |
 | HTTP layer | CORS; inflates gzip and deflate bodies; 413 above `jsonSizeLimit`; gzip above 1 KiB | gzip flushed after every frame | no size limit; progress events are never compressed | passed through, never compressed |
-| `rpcRoute` and your API | `DSON.parse` gives the arguments, `DSON.stringify` the answer | the generator is pulled once per read | the handler runs after the last byte, with the bytes or a chunked stream | the handler returns bytes, or a stream, with `fileMeta` |
+| `rpc.fetch` and your API | `DSON.parse` gives the arguments, `DSON.stringify` the answer | the generator is pulled once per read | the handler runs after the last byte, with the bytes or a chunked stream | the handler returns bytes, or a stream, with `fileMeta` |
 
 A call fetches the schema once per `baseUrl`, then sends one `POST` per call. A class gets a new instance per call; a module is shared.
 
@@ -560,7 +593,7 @@ sequenceDiagram
   participant App as your code
   participant Client as defuss-rpc/client
   participant HTTP as HTTP layer
-  participant Route as rpcRoute
+  participant Route as rpc.fetch
   participant API as your API
   App->>Client: getRpcClient<RpcApi>({ baseUrl })
   Client->>Route: POST /rpc/schema (once per baseUrl)
@@ -581,7 +614,7 @@ A generator answers with one NDJSON frame per `yield`; the server pulls the next
 sequenceDiagram
   participant App as your code
   participant Client as defuss-rpc/client
-  participant Route as HTTP layer + rpcRoute
+  participant Route as HTTP layer + rpc.fetch
   participant API as your API
   App->>Client: for await (… of rpc.ChatApi.reply("hi"))
   Client->>Route: POST /rpc, the same call body
@@ -601,7 +634,7 @@ An upload sends raw bytes; the server writes them to a temp file while it hashes
 sequenceDiagram
   participant App as your code
   participant Client as defuss-rpc/client
-  participant Route as HTTP layer + rpcRoute
+  participant Route as HTTP layer + rpc.fetch
   participant API as upload handler
   App->>Client: upload("file", data, { uploadId })
   opt resume
@@ -624,7 +657,7 @@ A download is one `GET`; name and hash travel in the headers, and the server nev
 sequenceDiagram
   participant App as your code
   participant Client as defuss-rpc/client
-  participant Route as HTTP layer + rpcRoute
+  participant Route as HTTP layer + rpc.fetch
   participant API as download handler
   App->>Client: download("file", baseUrl, { downloadId })
   Client->>Route: GET /rpc/download?handler=…&downloadId=…
@@ -638,7 +671,7 @@ sequenceDiagram
 
 ## Endpoints
 
-`rpcRoute` routes on the end of the path, so any prefix works. `ExpressRpcServer` mounts the same routes under `basePath`, adds `GET|POST /health`, and passes every other path on to its framework.
+`rpc.fetch` routes on the end of the path, so any prefix works, and `rpc.matches()` reads the path the same way. `ExpressRpcServer` mounts the same routes under `basePath`, adds `GET|POST /health`, and passes every other path on to its framework.
 
 | Method | Path | Answer |
 | --- | --- | --- |
@@ -658,7 +691,7 @@ Paste this prompt into your coding agent:
 ```text
 Add defuss-rpc to this app: https://github.com/kyr0/defuss-rpc
 Read its README.md and examples/ first. Install it with bun add defuss-rpc; on Node.js add express for its provider.
-Export one object of API classes and modules plus `export type RpcApi = typeof RpcApi`, register it with createRpcServer(), and serve it with new ExpressRpcServer() on Bun (Bun.serve, port 63920) or new ExpressRpcServer({ provider: expressProvider() }) on Node.js (import from defuss-rpc/providers/express), or with defussRpc() from defuss-rpc-vite or defuss-rpc-astro, which take the same options.
+Export one object of API classes and modules plus `export type RpcApi = typeof RpcApi`, pass it to `const rpc = createRpcServer(RpcApi)`, and serve that server with new ExpressRpcServer({ rpc }) on Bun (Bun.serve, port 63920) or new ExpressRpcServer({ rpc, provider: expressProvider() }) on Node.js (import from defuss-rpc/providers/express), or with defussRpc({ rpc }) from defuss-rpc-vite or defuss-rpc-astro, which take the same options. Register hooks and upload and download handlers on it: rpc.addHook(), rpc.addUploadHandler().
 On the client call getRpcClient<RpcApi>({ baseUrl }), use async generators for streams, upload()/download() for files, and server guard hooks for authorization.
 ```
 
@@ -677,11 +710,11 @@ claude plugin install defuss-vae@defuss-vae
 
 | File | What it shows | Run by the e2e test |
 | --- | --- | --- |
-| `api.ts`, `files.ts`, `hooks.ts` | the demo API, upload and download handlers, an upload guard | in every server below |
+| `api.ts`, `files.ts`, `hooks.ts` | the demo API, and functions that add upload and download handlers and an upload guard to a server | in every server below |
 | `server-express.ts` | the API on `ExpressRpcServer` with Express, plus one Express route of its own | started on Node.js and on Bun |
 | `server-bunway.ts` | the API on `ExpressRpcServer` with bunway | started on Bun |
 | `server-bun.ts` | the API on `ExpressRpcServer` without a provider (`Bun.serve`), plus one route of its own | started on Bun |
-| `server-route.ts` | `rpcRoute` in a hand-written `Bun.serve` | started on Bun |
+| `server-route.ts` | `rpc.fetch` and `rpc.matches()` in a hand-written `Bun.serve` | started on Bun |
 | `client.ts` | calls, streams, types, files, hooks; each `console.log` states its output | on Node.js and Bun, against every server |
 | `browser.ts` | upload with progress, download as Blob | in Chromium and WebKit, against every server |
 | `integrations/vite/example/`, `integrations/astro/example/` | the plugin and the integration, without a provider | `vite` and `astro dev` on Bun, opened in Chromium |
@@ -692,7 +725,25 @@ The project site [`docs/index.html`](docs/index.html) shows the same files, high
 
 **Guards are your trust boundary.** Every method a registered namespace exposes is callable by anyone who reaches the server - a TypeScript `private` method too (`defuss-rpc schema` warns about it; a `#private` method is not exposed), with arguments the client chose. Authenticate and authorize in a server guard (it sees the raw `Request`), validate arguments in the method, and keep internal helpers out of the namespace object. `ExpressRpcServer` allows any CORS origin by default; set `corsOrigin` for a browser-facing production server.
 
-**Upload state lives in one process.** Temp files go to `<os tmpdir>/defuss-uploads` (`setUploadDir()` changes it) until the handler succeeded; sessions are kept in memory, so a resume must reach the same process, and a restart forgets unfinished uploads. Behind a load balancer, pin uploads to one instance.
+**Upload state lives in its server, in one process.** Temp files go to the server's `uploadDir` until the handler succeeded or `rpc.close()` deletes them; sessions are kept in memory, so a resume must reach the same server in the same process, and a restart forgets unfinished uploads. The temp files of a process that ended without `close()` stay under `<os tmpdir>/defuss-uploads`. Behind a load balancer, pin uploads to one instance.
+
+## Migrating to 4.0
+
+In 4.0 `createRpcServer()` returns a server instead of registering on one per process. Code written for 3.x keeps working after one rename: `registerGlobalRpcApi(RpcApi)` registers on the deprecated global server, which `rpcRoute`, the module functions `addHook()`, `addUploadHandler()` and the others, and `ExpressRpcServer` without `rpc` serve as before. The wire protocol and the client are unchanged. To move to servers of your own:
+
+| 3.x (global server, deprecated) | 4.0 |
+| --- | --- |
+| `createRpcServer(RpcApi)` | `const rpc = createRpcServer(RpcApi)` |
+| `addHook(hook)`, `addUploadHandler(name, fn)` and the other module functions | `rpc.addHook(hook)`, `rpc.addUploadHandler(name, fn)` and so on |
+| `rpcRoute({ request })` | `rpc.fetch(request)` |
+| `export const ALL = rpcRoute` (Astro route) | `export const ALL: APIRoute = ({ request }) => rpc.fetch(request)` |
+| `new ExpressRpcServer(options)` | `new ExpressRpcServer({ rpc, ...options })` |
+| `defussRpc({ api: RpcApi })` (Vite, Astro) | `defussRpc({ rpc: createRpcServer(RpcApi) })` |
+| `setUploadDir(dir)`, `getUploadDir()` | `createRpcServer(RpcApi, { uploadDir: dir })`, `rpc.uploadDir` |
+| `clearRpcServer()` | `await rpc.close()`, then a new server |
+| `exposeRpc(tools, rpcRoute)` (defuss-mcp) | `exposeRpc(tools, ({ request }) => rpc.fetch(request))` |
+
+The global server keeps its 3.x rule for a repeated registration: while it holds namespaces, `registerGlobalRpcApi()` ignores a further call, and logs a `WARN` line about it; `registerGlobalRpcApi({})` empties it. A server from `createRpcServer()` never reads or writes the global one. VERIFIED: a probe with defuss-mcp 0.6.0 on 2026-11-23: `exposeRpc` with `({ request }) => rpc.fetch(request)` listed and called a method of a 4.0 server, whose guard ran.
 
 ## Development
 

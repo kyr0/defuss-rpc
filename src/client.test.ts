@@ -12,9 +12,9 @@ import {
 	uploadComplete,
 	type UploadEvent,
 } from "./client.js";
-import { addHook as addServerHook, addStreamingUploadHandler, addUploadHandler, clearRpcServer, createRpcServer, rpcRoute } from "./server.js";
+import { createRpcServer } from "./server.js";
 import { TestMathModule, TestStreamModule, TestTypesModule, TestUserApi, testBytes } from "./test/api.js";
-import { isolateUploads, PROVIDERS, sha256, startServer } from "./test/server.js";
+import { PROVIDERS, sha256, startServer } from "./test/server.js";
 import type { RpcServerProvider } from "./provider.js";
 
 const API = { TestUserApi, TestMathModule, TestTypesModule, TestStreamModule };
@@ -26,14 +26,10 @@ const serverSaw: { authorization?: string | null } = {};
 
 describe.for(PROVIDERS)("RPC client against ExpressRpcServer on $name", (provider: RpcServerProvider<unknown>) => {
 	beforeAll(async () => {
-		await isolateUploads();
 		server = await startServer(provider, API);
 		url = server.url;
 	});
-	afterAll(async () => {
-		await server.stop();
-		await clearRpcServer();
-	});
+	afterAll(() => server.stop());
 	beforeEach(() => {
 		clearSchemaCache();
 		clearHooks();
@@ -93,18 +89,13 @@ describe.for(PROVIDERS)("RPC client against ExpressRpcServer on $name", (provide
 		const first = await getRpcClient<Api>({ baseUrl: url });
 		expect(Object.keys(first)).toContain("TestUserApi");
 		// A second server in this process with another API: its client must see that API, not the cached one.
-		await clearRpcServer();
-		createRpcServer({ OtherApi: TestMathModule });
-		const other = new (await import("./express-server.js")).ExpressRpcServer({ provider });
-		const { url: otherUrl } = await other.start();
+		const other = await startServer(provider, createRpcServer({ OtherApi: TestMathModule }));
 		try {
-			expect(Object.keys(await getRpcClient({ baseUrl: otherUrl }))).toEqual(["OtherApi"]);
+			expect(Object.keys(await getRpcClient({ baseUrl: other.url }))).toEqual(["OtherApi"]);
 			expect(Object.keys(await getRpcClient({ baseUrl: url }))).toContain("TestUserApi");
 		} finally {
 			await other.stop();
-			await clearRpcServer();
-			createRpcServer(API);
-			await isolateUploads();
+			await other.rpc.close();
 		}
 	});
 
@@ -140,7 +131,7 @@ describe.for(PROVIDERS)("RPC client against ExpressRpcServer on $name", (provide
 	describe("hooks and headers", () => {
 		it("runs guard, response and result hooks in order and sends setHeaders()", async () => {
 			const order: string[] = [];
-			addServerHook({ phase: "guard", fn: (_ns, _m, _a, request) => void (serverSaw.authorization = request.headers.get("authorization")) });
+			server.rpc.addHook({ phase: "guard", fn: (_ns, _m, _a, request) => void (serverSaw.authorization = request.headers.get("authorization")) });
 			setHeaders({ Authorization: "Bearer t0k3n" });
 			addHook({ phase: "guard", fn: (ns, method, args) => (order.push(`guard ${ns}.${method}(${args})`), true) });
 			addHook({ phase: "response", fn: (_ns, _m, _a, _r, response) => void order.push(`response ${response?.status}`) });
@@ -161,13 +152,13 @@ describe.for(PROVIDERS)("RPC client against ExpressRpcServer on $name", (provide
 
 	describe("uploads from Node.js", () => {
 		beforeAll(() => {
-			addUploadHandler("store", async (data, meta) => ({ size: data.byteLength, sha256: meta.sha256, name: meta.originalFilename, encoding: meta.contentEncoding }));
-			addStreamingUploadHandler("count", async (stream) => {
+			server.rpc.addUploadHandler("store", async (data, meta) => ({ size: data.byteLength, sha256: meta.sha256, name: meta.originalFilename, encoding: meta.contentEncoding }));
+			server.rpc.addStreamingUploadHandler("count", async (stream) => {
 				let bytes = 0;
 				for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) bytes += chunk.byteLength;
 				return bytes;
 			});
-			addUploadHandler("fail", () => {
+			server.rpc.addUploadHandler("fail", () => {
 				throw new Error("handler said no");
 			});
 		});
@@ -205,7 +196,7 @@ describe.for(PROVIDERS)("RPC client against ExpressRpcServer on $name", (provide
 
 		it("upload() with a known uploadId resumes from the server's offset", async () => {
 			const data = testBytes(300_000, 21);
-			// A first attempt that dies after 100 000 bytes, sent straight to rpcRoute like a dropped connection.
+			// A first attempt that dies after 100 000 bytes, sent straight to rpc.fetch like a dropped connection.
 			let sent = false;
 			const body = new ReadableStream<Uint8Array>({
 				pull(controller) {
@@ -214,15 +205,15 @@ describe.for(PROVIDERS)("RPC client against ExpressRpcServer on $name", (provide
 					sent = true;
 				},
 			});
-			const first = await rpcRoute({
-				request: new Request("http://localhost/rpc/upload", {
+			const first = await server.rpc.fetch(
+				new Request("http://localhost/rpc/upload", {
 					method: "POST",
 					headers: { "X-Upload-Handler": "store", "X-Upload-Id": "resume-me", "X-Original-Size": String(data.byteLength) },
 					body,
 					// @ts-expect-error undici needs duplex for a streamed body
 					duplex: "half",
 				}),
-			});
+			);
 			expect(first.status).toBe(500);
 			const sending: number[] = [];
 			let final: UploadEvent<{ size: number }> | undefined;

@@ -162,6 +162,16 @@ describe("analyzeRpcApi", () => {
 		expect((schema[0] as any).methods.add.returns).toEqual({ type: "number", schema: { type: "number" } });
 	});
 
+	it("reads a server assigned to a variable and the deprecated global registration", () => {
+		const { schema } = analyze({
+			"/server.ts": `import { createRpcServer, registerGlobalRpcApi } from "defuss-rpc/server";\nexport const rpc = createRpcServer({ A: { a: () => 1 } });\nregisterGlobalRpcApi({ B: { b: () => "b" } });`,
+		});
+		expect(schema.map((e) => [e.kind === "class" ? e.className : e.moduleName, Object.keys(e.methods)])).toEqual([
+			["A", ["a"]],
+			["B", ["b"]],
+		]);
+	});
+
 	it("reads the api option of the Vite and Astro integrations", () => {
 		const { schema } = analyze({
 			"/vite.config.ts": `import defussRpc from "defuss-rpc-vite";\nimport { Api } from "./api";\nexport default { plugins: [defussRpc({ api: Api })] };`,

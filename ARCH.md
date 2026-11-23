@@ -10,10 +10,10 @@ flowchart LR
     proxy["getRpcClient() proxy"]
     up["upload() / download()"]
   end
-  subgraph Server["server.ts"]
-    route["rpcRoute: Request → Response"]
-    reg[("registries on globalThis:<br/>namespaces, handlers, hooks")]
-    state[("upload-state.ts:<br/>sessions, temp files")]
+  subgraph Server["server.ts: createRpcServer() → RpcServer"]
+    route["rpc.fetch: Request → Response"]
+    reg[("ServerState per server:<br/>namespaces, handlers, hooks")]
+    state[("UploadState per server:<br/>sessions, temp files")]
   end
   subgraph Http["ExpressRpcServer"]
     core["http-core.ts: CORS, /health,<br/>body limit, gzip (Fetch API)"]
@@ -33,7 +33,7 @@ flowchart LR
   vite["defuss-rpc-vite, defuss-rpc-astro<br/>(integrations/, own packages)"] --> Http
 ```
 
-`rpcRoute` is a function from a Fetch API `Request` to a `Response`, which `Bun.serve`, Astro routes and the tests call directly. `ExpressRpcServer` adds what a standalone server needs (CORS, a health route, a body size limit, gzip and disconnect handling) and runs on `Bun.serve`, or on the framework of the provider it is given.
+`createRpcServer()` returns an `RpcServer`, whose bound `fetch` is a function from a Fetch API `Request` to a `Response`, which `Bun.serve`, Astro routes and the tests call directly. `ExpressRpcServer` adds what a standalone server needs (CORS, a health route, a body size limit, gzip and disconnect handling) and runs on `Bun.serve`, or on the framework of the provider it is given.
 
 Why not Express routes as the core: a framework-specific core would need a second implementation for Bun and Astro, and the two would drift. VERIFIED: `scripts/e2e.mjs` runs the same demo API on `ExpressRpcServer` (Node.js) and `Bun.serve` (Bun) and compares the client's output line by line.
 
@@ -57,7 +57,7 @@ What the bridge does for `node:http`:
 
 The bunway provider calls `Bun.serve` itself instead of bunway's `listen()`, because Bun closes connections that send nothing for 10 s, and a stream can be quiet longer. The provider lifts that limit for NDJSON and Server-Sent Events responses only (`server.timeout(request, 0)`). bunway's WebSocket routes therefore need bunway's own `listen()`.
 
-`scripts/bench.mjs` (`make bench`) compares the providers; README.md has the latest numbers. It also measures `rpcRoute` in a bare `Bun.serve`, which README.md and the website leave out of their tables: it runs without CORS, a body limit or the content-type check, so its numbers do not compare with a server that has them. It is the baseline for what the default provider's fetch handler and `http-core.ts` cost, the only code between the two setups (VERIFIED: 1.9 times the default's calls per second in both runs of 2026-11-02, 123,821 against 63,926 and 123,002 against 64,195, with the same 29 MiB idle).
+`scripts/bench.mjs` (`make bench`) compares the providers; README.md has the latest numbers. It also measures `rpc.fetch` in a bare `Bun.serve`, which README.md and the website leave out of their tables: it runs without CORS, a body limit or the content-type check, so its numbers do not compare with a server that has them. It is the baseline for what the default provider's fetch handler and `http-core.ts` cost, the only code between the two setups (VERIFIED: 1.9 times the default's calls per second in both runs of 2026-11-02, 123,821 against 63,926 and 123,002 against 64,195, with the same 29 MiB idle).
 
 Why one fixed default port (63920) instead of `0`: a client in another process finds a server that nobody configured. 63920 is in the dynamic range (49152 to 65535), which IANA never assigns to a service. A fixed port needs one fix that `0` hid, in the Vite plugin: Vite creates a restarted dev server before it closes the old one (integrations/vite/ARCH.md).
 
@@ -88,7 +88,7 @@ A generator answers with NDJSON. The response stream pulls the next value from t
 ```mermaid
 sequenceDiagram
   participant C as Client
-  participant S as rpcRoute
+  participant S as rpc.fetch
   participant D as Temp file
   participant H as Handler
   C->>S: GET /rpc/upload/progress/{id} (SSE, opened first)
@@ -109,9 +109,13 @@ The progress stream subscribes before the session exists, because a client opens
 
 File names travel percent-encoded in `X-Original-Filename` (a header value outside Latin-1 makes `fetch` throw) and come back as RFC 6266 `filename*` in `Content-Disposition`. VERIFIED: `src/client.browser.test.ts` in Chromium and WebKit.
 
-## Shared state
+## One state per server
 
-The registries (`server.ts`), upload sessions (`upload-state.ts`) and the client's default endpoint live on `globalThis` under `Symbol.for("defuss-rpc.*")` keys, as does the plugin state of defuss-rpc-vite. Why: one process can load these modules more than once. The ESM and CommonJS builds are separate modules, and Astro bundles packages that peer on `astro` (defuss-rpc-astro) into its SSR build, where its middleware runs a second module copy. VERIFIED: with module variables, `Astro.locals.rpcEndpoint` was empty in `astro dev`; `integrations/astro/src/index.test.ts` loads a second copy with `vi.resetModules()` and sees the upload handlers of the first.
+`createRpcServer()` creates a `ServerState` (`server.ts`: namespaces, docs, hooks, upload and download handlers, open streams) with an `UploadState` (`upload-state.ts`: sessions, progress listeners, temp-file directory), and every handler takes the state of its server. Why a state per server instead of registries on `globalThis` (3.x): there a second `createRpcServer()` call was ignored, so a process served one API, and every test emptied the process-wide registry first. A server is a value its owner creates, mounts and closes; two APIs, or a test beside a dev server, run in one process without sharing namespaces, hooks or upload IDs, and the value reaches every module copy without a registry. Each server writes temp files to a directory of its own, so the same upload ID on two servers names two files. VERIFIED: `src/instances.test.ts`; with one upload state and hook list shared by all servers, 7 of its 9 tests fail. The state lookups cost no throughput that `make bench` can tell apart from noise. VERIFIED: two runs of 3.0.0 and three of this design on 2026-11-23, back to back on one machine at load averages 7 to 18: each server's mean calls per second differed by 7 % or less between the designs, in both directions, while two runs of the same code differed by up to 42 % (bunway: 35,638 and 50,659).
+
+Why `close()` on the RPC server and `stop()` on the listener: the RPC server owns sessions, temp files and streams, the listener owns sockets. A host may serve one RPC server through several listeners in turn, or stop a listener and keep the uploads it took. `close()` ends the open streams with an `error` frame or event, so a client sees why its stream stopped, and answers later requests with 503. VERIFIED: `src/express-server.test.ts` ("stop() leaves the RPC server open, and a new listener serves the same one") on every provider.
+
+The deprecated global server (`registerGlobalRpcApi()`, `rpcRoute`, the module functions `addHook()` and so on) is one more `ServerState`, kept on `globalThis` under `Symbol.for("defuss-rpc.global-server")`; `createRpcServer()` never touches it. Why it stays on `globalThis`: one process can load these modules more than once. The ESM and CommonJS builds are separate modules, and Astro bundles packages that peer on `astro` (defuss-rpc-astro) into its SSR build, where its middleware runs a second module copy; a registration through one copy must reach the others. The client's default endpoint and the plugin state of defuss-rpc-vite (which holds the integration's `rpc` server) live there for the same reason. VERIFIED: with module variables, `Astro.locals.rpcEndpoint` was empty in `astro dev`; `integrations/astro/src/index.test.ts` loads a second copy with `vi.resetModules()` and sees the `rpc` server and the global upload handlers of the first; `scripts/e2e.mjs` registers on the global server through the CommonJS build and calls it through the ESM build, on Node.js and Bun.
 
 ## Vite and Astro
 
@@ -123,7 +127,7 @@ In this repository each integration reaches defuss-rpc (and defuss-rpc-astro rea
 
 - Logs: one line per event from `src/log.ts`: ISO-8601 UTC timestamp, level, `defuss-rpc`, message, `key=value`. The library logs server start and stop and methods or handlers that threw; client errors (400, 403, 404) are answered, not logged.
 - Limits: `jsonSizeLimit` (default 1 MB) bounds call bodies; uploads have no size limit of their own: add a guard (see `examples/hooks.ts`).
-- State: upload sessions are in memory and temp files in `<os tmpdir>/defuss-uploads` (`setUploadDir()`); a successful handler run deletes its file, a failed one keeps it for a retry. Nothing expires abandoned uploads; clean the directory on deploy or restart.
+- State: upload sessions are in the memory of their server, temp files in its `uploadDir` (default `<os tmpdir>/defuss-uploads/<random UUID>`, which `close()` removes); a successful handler run deletes its file, a failed one keeps it for a retry. Nothing expires abandoned uploads, and a process that ends without `close()` leaves its files under `<os tmpdir>/defuss-uploads`; clean that directory on deploy or restart.
 - Runtimes: without a provider the server runs on Bun only; the Express provider runs on Node.js 22, 24 and 26 (the versions CI tests) and on Bun, the bunway provider on Bun.
 - Ports: every server listens on 63920 unless given `port`; `make start` serves the static website on 4173 (`SITE_PORT`).
 - Idle streams: VERIFIED on Bun 1.4.3: an NDJSON stream silent for 12 s, longer than `Bun.serve`'s 10 s default, reached the client complete on Express and bunway.
@@ -135,7 +139,7 @@ In this repository each integration reaches defuss-rpc (and defuss-rpc-astro rea
 - `Content-Disposition` is built from an ASCII fallback plus the percent-encoded name, so a file name cannot inject header syntax.
 - `ExpressRpcServer` allows any CORS origin by default; with a list it echoes only listed origins (with `Vary: Origin`).
 - Call bodies are decoded by defuss-dson 1.2.0 or later, which refuses records that name a global or take an allocation size from the body (see Calls above).
-- Calls run only with `Content-Type: application/json`: a cross-origin page can send `text/plain` or form bodies without a CORS preflight, and those get 400 without running anything.
+- Through `ExpressRpcServer`, calls run only with `Content-Type: application/json`: a cross-origin page can send `text/plain` or form bodies without a CORS preflight, and those get 400 without running anything. `rpc.fetch` alone checks neither the content type nor the body size and adds no CORS headers; a host that mounts it directly must add all three (README.md, section Serve it).
 
 ## Privacy
 

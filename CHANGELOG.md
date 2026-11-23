@@ -1,5 +1,26 @@
 # Changelog
 
+## 4.0.0
+
+Servers of their own: `createRpcServer()` returns an RPC server instead of registering on one per process. defuss-rpc-vite and defuss-rpc-astro move to 4.0.0 with it (peer range ^4.0.0) and take the server as `rpc`.
+
+### Breaking
+
+- `createRpcServer(api, options)` returns an `RpcServer`: `fetch(request)` (bound), `matches(request)`, `name`, `uploadDir`, `close()`, and `addHook()`, `addUploadHandler()`, `addStreamingUploadHandler()`, `addDownloadHandler()`, `addStreamingDownloadHandler()` that register on this server only. It no longer registers on the process-wide server, so `rpcRoute`, the module functions and `ExpressRpcServer` without `rpc` do not see what it holds. Every call returns a new server; none ignores or replaces another.
+- Code written for 3.x keeps working after one rename, from `createRpcServer(api)` to `registerGlobalRpcApi(api)`. README.md, section "Migrating to 4.0", lists the replacement of every deprecated function.
+
+### New
+
+- `new ExpressRpcServer({ rpc })` and `createExpressRpcServer({ rpc })` serve a given RPC server; `stop()` stops the listener and leaves the RPC server open.
+- `rpc.close()` ends one server: later requests get 503, running generator streams end with an `error` frame and run their `finally`, progress streams end with an `error` event, and its temp files are deleted.
+- Upload sessions, progress listeners and temp files are per server; each server has a temp directory of its own (`<os tmpdir>/defuss-uploads/<random UUID>`, or the `uploadDir` option), so two servers may receive uploads with the same ID at the same time.
+- defuss-rpc-vite and defuss-rpc-astro: the `rpc` option takes the server to run; `api` is deprecated and registers on the global server, as before.
+- `defuss-rpc schema` also reads `registerGlobalRpcApi(...)` calls and a server assigned to a variable.
+
+### Deprecated
+
+- `registerGlobalRpcApi()`, `rpcRoute`, `addHook()`, `addUploadHandler()`, `addStreamingUploadHandler()`, `addDownloadHandler()`, `addStreamingDownloadHandler()`, `clearUploadHandlers()`, `clearDownloadHandlers()`, `clearRpcServer()`, `setUploadDir()` and `getUploadDir()`: they act on the global server. A repeated `registerGlobalRpcApi()` is still ignored while the global server holds namespaces, now with a `WARN` log line.
+
 ## 3.0.0
 
 API documentation from the source, and one rule for what a client may call. The major version is for that rule; defuss-rpc-vite and defuss-rpc-astro move to 3.0.0 with it (unchanged, their peer range is ^3.0.0).

@@ -13,7 +13,7 @@
  */
 import type { Plugin, ViteDevServer } from "vite";
 import { createFilter } from "vite";
-import { createRpcServer } from "defuss-rpc/server";
+import { registerGlobalRpcApi } from "defuss-rpc/server";
 import { ExpressRpcServer } from "defuss-rpc/express-server";
 import { getRpcEndpoint, getRpcServer, setRpcConfig, setRpcEndpoint, setRpcServer, type RpcPluginOptions } from "./rpc-state.js";
 
@@ -34,25 +34,28 @@ function virtualModule(endpointExpression: string): string {
 /**
  * Creates the Vite plugin.
  *
- * - `vite dev`: registers `options.api`, starts an `ExpressRpcServer` (on `Bun.serve` unless `options.provider` names
- *   one; port 63920 unless `options.port` does) and stops it with Vite. `virtual:defuss-rpc` exports the running server's URL, or `options.endpoint` when set.
+ * - `vite dev`: starts an `ExpressRpcServer` for `options.rpc` (on `Bun.serve` unless `options.provider` names one;
+ *   port 63920 unless `options.port` does) and stops it with Vite. `virtual:defuss-rpc` exports the running server's
+ *   URL, or `options.endpoint` when set.
  * - `vite build`: starts nothing; `virtual:defuss-rpc` exports `options.endpoint`, else
  *   `import.meta.env.VITE_DEFUSS_RPC_URL`, else `""` (same origin as the page).
- * - A change to a file matching `watch` reloads the page, so it fetches the schema again. The API itself is
- *   re-registered when Vite restarts after a change to `vite.config.ts` or a file it imports.
+ * - A change to a file matching `watch` reloads the page, so it fetches the schema again. A change to `vite.config.ts`
+ *   or a file it imports restarts Vite, which runs the new config's server.
  *
  * @example
  * ```ts
  * // vite.config.ts
  * import { defineConfig } from "vite";
  * import { defussRpc } from "defuss-rpc-vite";
+ * import { createRpcServer } from "defuss-rpc/server";
  * import RpcApi from "./src/rpc.js";
  *
  * // `bunx --bun vite`: Bun.serve on port 63920. On Node.js add `provider: expressProvider()`.
- * export default defineConfig({ plugins: [defussRpc({ api: RpcApi })] });
+ * export default defineConfig({ plugins: [defussRpc({ rpc: createRpcServer(RpcApi) })] });
  * ```
  */
 export function defussRpc(options: RpcPluginOptions): Plugin {
+	if (!options.rpc && !options.api) throw new TypeError("defussRpc: pass the RPC server, `rpc: createRpcServer(api)`");
 	const watchPatterns = options.watch
 		? Array.isArray(options.watch)
 			? options.watch
@@ -75,15 +78,18 @@ export function defussRpc(options: RpcPluginOptions): Plugin {
 		},
 
 		async configureServer(viteServer: ViteDevServer) {
-			// Replace, not merge: a restarted dev server (after a config change) must serve the new API object, while
-			// createRpcServer() alone would keep the first registration.
-			createRpcServer({});
-			createRpcServer(options.api);
+			if (!options.rpc) {
+				// The deprecated `api` option: replace, not merge, so a restarted dev server (after a config change) serves
+				// the new API object, while a second registration alone would keep the first.
+				registerGlobalRpcApi({});
+				registerGlobalRpcApi(options.api!);
+			}
 			// Vite starts the restarted dev server before it closes the old one, and both want the same fixed port.
 			// VERIFIED: restartServer() in vite 8.3.5 (dist/node/chunks/node.js) runs configureServer, then _closeServer.
 			await getRpcServer()?.stop();
 
 			const server = new ExpressRpcServer({
+				rpc: options.rpc,
 				provider: options.provider,
 				port: options.port,
 				protocol: options.protocol,

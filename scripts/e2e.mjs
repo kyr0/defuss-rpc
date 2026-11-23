@@ -10,9 +10,11 @@
  * Steps, each one asserted:
  * 1. Pack all three; each tarball holds only package.json, README.md, LICENSE and dist/ files, and every export target.
  * 2. Every entry point loads with `import`, and with `require` where it has a CommonJS build, with and without the
- *    `.js` suffix; on Node.js, except the bunway provider, which loads on Bun only.
+ *    `.js` suffix; on Node.js, except the bunway provider, which loads on Bun only. On Node.js and Bun, an RPC server
+ *    made by one build is served over HTTP by the other's ExpressRpcServer, two servers of the two builds stay apart,
+ *    and the deprecated global server is the same for both builds.
  * 3. The demo servers of examples/ start: ExpressRpcServer without a provider (Bun.serve, Bun), on Express (Node.js
- *    and Bun) and on bunway (Bun), and `rpcRoute` in a hand-written Bun.serve (Bun).
+ *    and Bun) and on bunway (Bun), and `rpc.fetch` in a hand-written Bun.serve (Bun).
  * 4. examples/client.ts runs on Node.js and Bun against every server and prints what its comments say; the raw
  *    stream matches examples/wire.ndjson; the Express example's own route answers next to the RPC routes. The
  *    installed `defuss-rpc schema` CLI (bunx and node) reads examples/*.ts and lists exactly the namespaces and
@@ -38,6 +40,39 @@ import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, webkit } from "playwright";
 import { serveSite } from "./serve.mjs";
+
+/**
+ * Step 2's interop program, run in the consumer on Node.js and Bun: the ESM and CommonJS builds are separate module
+ * copies, so a server is a value either can serve, while the deprecated global server must be one per process.
+ */
+const INTEROP = `import { createRequire } from "node:module";
+import { DSON } from "defuss-dson";
+import * as esm from "defuss-rpc/server";
+import { ExpressRpcServer as EsmListener } from "defuss-rpc/express-server";
+import { expressProvider as esmExpress } from "defuss-rpc/providers/express";
+const require = createRequire(import.meta.url);
+const cjs = require("defuss-rpc/server");
+const { ExpressRpcServer: CjsListener } = require("defuss-rpc/express-server");
+const { expressProvider: cjsExpress } = require("defuss-rpc/providers/express");
+if (esm.createRpcServer === cjs.createRpcServer) throw new Error("expected two module copies");
+const body = (className) => DSON.stringify({ className, methodName: "add", args: [3, 4] });
+async function call(url, className) {
+	const response = await fetch(url + "/rpc", { method: "POST", headers: { "Content-Type": "application/json" }, body: body(className) });
+	return response.status === 200 ? DSON.parse(await response.text()) : response.status;
+}
+const fromCjs = cjs.createRpcServer({ Math: { add: (a, b) => a + b } });
+const fromEsm = esm.createRpcServer({ Math: { add: (a, b) => a * b } });
+const listeners = [new EsmListener({ rpc: fromCjs, provider: esmExpress(), host: "127.0.0.1", port: 0 }), new CjsListener({ rpc: fromEsm, provider: cjsExpress(), host: "127.0.0.1", port: 0 })];
+const [cjsUrl, esmUrl] = await Promise.all(listeners.map(async (listener) => (await listener.start()).url));
+const results = [await call(cjsUrl, "Math"), await call(esmUrl, "Math")];
+if (results.join() !== "7,12") throw new Error("served across builds: " + results.join());
+cjs.registerGlobalRpcApi({ Global: { add: (a, b) => a - b } });
+const global = await esm.rpcRoute({ request: new Request("http://localhost/rpc", { method: "POST", body: body("Global") }) });
+if (DSON.parse(await global.text()) !== -1) throw new Error("global server differs between builds");
+await Promise.all(listeners.map((listener) => listener.stop()));
+await Promise.all([fromCjs.close(), fromEsm.close()]);
+console.log("ok");
+`;
 import { region } from "./docs.ts";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
@@ -156,16 +191,17 @@ try {
 			if (Object.keys(esm).length === 0) throw new Error(id);
 			if (commonjs.has(id) && Object.keys(esm).sort().join() !== Object.keys(require(id)).sort().join()) throw new Error(id);
 		}
-		const { getRpcClient } = await import("defuss-rpc/client");
-		const { rpcRoute } = require("defuss-rpc/server");
-		if (typeof getRpcClient !== "function" || typeof rpcRoute !== "function") throw new Error("api");
 		console.log("ok");`,
 	);
 	assert.equal(run("node", ["entries.mjs"], CONSUMER).trim(), "ok");
+	await writeFile(join(CONSUMER, "interop.mjs"), INTEROP);
+	// The last line: the listeners log their start and stop to stdout before it.
+	for (const runtime of ["node", "bun"]) assert.equal(run(runtime, ["interop.mjs"], CONSUMER).trim().split("\n").at(-1), "ok", `interop.mjs on ${runtime}`);
 	const bunEntries = Object.keys(pkg.exports).filter(bunOnly).map((k) => `defuss-rpc${k.slice(1)}`);
 	const loaded = `for (const id of ${JSON.stringify(bunEntries)}) if (typeof (await import(id)).bunwayProvider !== "function") throw new Error(id); console.log("ok");`;
 	assert.equal(run("bun", ["-e", loaded], CONSUMER).trim(), "ok");
 	check(`${entries.length} entry points of ${Object.keys(manifests).join(", ")} load on Node.js as ESM, ${commonjs.length} of them as CommonJS too; ${bunEntries.length} on Bun`);
+	check("ESM and CommonJS builds on Node.js and Bun: each serves the other's RPC server over HTTP, their servers stay apart, the global server is shared");
 
 	// 3. servers ------------------------------------------------------------------
 	const listening = /rpc server listening url=(\S+)/;
@@ -174,7 +210,7 @@ try {
 		["Express on Bun", "bun", "examples/server-express.ts"],
 		["bunway on Bun", "bun", "examples/server-bunway.ts"],
 		["no provider (Bun.serve) on Bun", "bun", "examples/server-bun.ts"],
-		["rpcRoute in Bun.serve on Bun", "bun", "examples/server-route.ts"],
+		["rpc.fetch in Bun.serve on Bun", "bun", "examples/server-route.ts"],
 	];
 	/** label → { url, runtime }; runtime is what the website's status badge shows. */
 	const servers = {};

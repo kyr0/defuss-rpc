@@ -5,6 +5,7 @@
 // #region vite-config
 import { defineConfig } from "vite";
 import { defussRpc } from "defuss-rpc-vite";
+import { createRpcServer } from "defuss-rpc/server";
 import RpcApi from "./api.ts";
 
 // No provider: the RPC server runs on Bun.serve, port 63920.
@@ -12,7 +13,7 @@ import RpcApi from "./api.ts";
 export default defineConfig({
 	plugins: [
 		defussRpc({
-			api: RpcApi,
+			rpc: createRpcServer(RpcApi),
 			host: "127.0.0.1",
 			watch: ["api.ts"],
 		}),

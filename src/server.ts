@@ -1,11 +1,15 @@
 /**
- * The RPC server core: a namespace registry and one Fetch API handler, {@link rpcRoute}, for every endpoint.
+ * The RPC server core: {@link createRpcServer} returns one endpoint, an {@link RpcServer} whose `fetch` answers every
+ * RPC route from its own namespaces, hooks, handlers and upload sessions.
  *
  * Why one `Request → Response` function instead of a framework middleware: the same handler then runs unchanged in
- * Astro API routes, `Bun.serve`, `ExpressRpcServer` (on any provider) and tests, and an adapter only has to
- * translate requests. The registries are module state, because an RPC server is one per process and handlers
- * are registered from side-effect imports long before a request arrives.
- * VERIFIED: scripts/e2e.mjs serves the same demo API through `Bun.serve` and `ExpressRpcServer` on both providers.
+ * Astro API routes, `Bun.serve`, `ExpressRpcServer` (on any provider), defuss-serve and tests, and an adapter only has
+ * to translate requests. Why a state object per server instead of module state: two servers in one process (two
+ * APIs, a test beside a dev server) must not see each other's namespaces, hooks or uploads, and a server passed as a
+ * value reaches every module copy (ESM and CommonJS builds, a bundler's SSR copy) without a process-wide registry.
+ * Every handler below takes its server's {@link ServerState}; the deprecated module functions (`rpcRoute`, `addHook`,
+ * …) are the one exception and act on a global server kept for code written before 4.0.
+ * VERIFIED: src/instances.test.ts runs two servers with overlapping namespaces, hooks and upload IDs in one process.
  */
 import { DSON } from "defuss-dson";
 import type {
@@ -21,8 +25,10 @@ import type {
 	RpcApiModule,
 	RpcCallDescriptor,
 	RpcMethodDescriptor,
+	RpcApiSchema,
 	RpcRoute,
 	RpcSchemaEntry,
+	RpcServer,
 	RpcServerOptions,
 	ServerHook,
 	UploadHandlerEntry,
@@ -31,24 +37,14 @@ import type {
 	UploadStreamFrame,
 	UploadStreamHandlerFn,
 } from "./types.d.js";
-import {
-	addUploadListener,
-	cleanupSession,
-	clearAllSessions,
-	createSession,
-	emitUploadEvent,
-	ensureUploadDir,
-	fileChunks,
-	getSession,
-	getTempFileSize,
-	updateSession,
-	type UploadEvent,
-} from "./upload-state.js";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createUploadState, fileChunks, type UploadEvent, type UploadState } from "./upload-state.js";
 import { errorMessage, log } from "./log.js";
 
 // re-export for type / code safety
 export * from "./types.d.js";
-export { getUploadDir, setUploadDir } from "./upload-state.js";
 
 /** Base path of the RPC dispatch endpoint. */
 export const RPC_PATH = "/rpc" as const;
@@ -68,26 +64,34 @@ export const RPC_DOWNLOAD_PATH = "/rpc/download" as const;
 /** How long the progress stream waits for an upload whose POST has not arrived yet. */
 const SESSION_WAIT_MS = 10_000;
 
-/**
- * The registries: namespaces, upload and download handlers, hooks. They live on `globalThis` under a registry
- * symbol because one process can load this module more than once (the ESM and CommonJS builds, a bundler's copy
- * in an SSR build), and a handler registered through one copy must be served by every other.
- */
-const registry = ((globalThis as Record<symbol, unknown>)[Symbol.for("defuss-rpc.server")] ??= {
-	entries: new Map(),
-	uploadHandlers: new Map(),
-	downloadHandlers: new Map(),
-	hooks: [],
-	docs: new Map(),
-}) as {
+/** Everything one server owns; every handler in this module reads and writes only the state it is given. */
+interface ServerState {
 	entries: Map<string, RpcApiEntry>;
+	docs: Map<string, RpcSchemaEntry>;
+	hooks: ServerHook[];
 	uploadHandlers: Map<string, UploadHandlerEntry>;
 	downloadHandlers: Map<string, DownloadHandlerEntry>;
-	hooks: ServerHook[];
-	docs: Map<string, RpcSchemaEntry>;
-};
-registry.docs ??= new Map();
-const { entries: rpcApiEntries, uploadHandlers, downloadHandlers, hooks } = registry;
+	uploads: UploadState;
+	/** Enders of the responses still streaming (generators, upload progress), called by `close()`. */
+	streams: Set<() => void>;
+	closed: boolean;
+}
+
+function createState(uploadDir: string): ServerState {
+	return {
+		entries: new Map(),
+		docs: new Map(),
+		hooks: [],
+		uploadHandlers: new Map(),
+		downloadHandlers: new Map(),
+		uploads: createUploadState(uploadDir),
+		streams: new Set(),
+		closed: false,
+	};
+}
+
+/** What a closed server answers, and the message its open streams end with. */
+const CLOSED_MESSAGE = "RPC server closed";
 
 /**
  * Names that are never RPC methods even though every object has them.
@@ -169,29 +173,40 @@ function exposedMethods(entry: RpcApiEntry): Map<string, Function> {
  * pulling produces a frame only when the consumer reads, so a slow client slows the generator instead of filling
  * memory. `cancel` calls `return()`, so the generator's `finally` blocks run when the client stops reading.
  */
-function streamGeneratorResponse(iter: AsyncIterator<unknown> | Iterator<unknown>): Response {
+function streamGeneratorResponse(state: ServerState, iter: AsyncIterator<unknown> | Iterator<unknown>): Response {
 	const encoder = new TextEncoder();
-	const send = (controller: ReadableStreamDefaultController<Uint8Array>, frame: DsonStreamFrame) =>
+	let ended = false;
+	let controller!: ReadableStreamDefaultController<Uint8Array>;
+	// Sends a frame unless the stream has ended; the last frame (return or error) ends it.
+	const send = (frame: DsonStreamFrame, last = false) => {
+		if (ended) return;
 		controller.enqueue(encoder.encode(`${DSON.stringify(frame)}\n`));
+		if (!last) return;
+		ended = true;
+		state.streams.delete(end);
+		controller.close();
+	};
+	// close() of the server: an error frame tells the client why the stream stopped, and return() runs `finally`.
+	const end = () => {
+		send({ type: "error", error: { message: CLOSED_MESSAGE } }, true);
+		void Promise.resolve(iter.return?.()).catch(() => {});
+	};
+	state.streams.add(end);
 	const stream = new ReadableStream<Uint8Array>({
-		async pull(controller) {
+		start(c) {
+			controller = c;
+		},
+		async pull() {
 			try {
 				const { done, value } = await iter.next();
-				if (done) {
-					send(controller, { type: "return", value: value ?? null });
-					controller.close();
-				} else {
-					send(controller, { type: "yield", value });
-				}
+				send(done ? { type: "return", value: value ?? null } : { type: "yield", value }, !!done);
 			} catch (error: unknown) {
-				send(controller, {
-					type: "error",
-					error: { message: errorMessage(error), stack: error instanceof Error ? error.stack : undefined },
-				});
-				controller.close();
+				send({ type: "error", error: { message: errorMessage(error), stack: error instanceof Error ? error.stack : undefined } }, true);
 			}
 		},
 		async cancel() {
+			ended = true;
+			state.streams.delete(end);
 			await iter.return?.();
 		},
 	});
@@ -228,16 +243,23 @@ function decodeHeader(value: string): string {
 	}
 }
 
-async function runGuards(className: string, methodName: string, args: unknown[], request: Request) {
-	for (const hook of hooks) {
+async function runGuards(state: ServerState, className: string, methodName: string, args: unknown[], request: Request) {
+	for (const hook of state.hooks) {
 		// Only an explicit `false` blocks; `void`/`undefined` lets the call through.
 		if (hook.phase === "guard" && (await hook.fn(className, methodName, args, request)) === false) return false;
 	}
 	return true;
 }
 
-async function runResultHooks(className: string, methodName: string, args: unknown[], request: Request, result: unknown) {
-	for (const hook of hooks) {
+async function runResultHooks(
+	state: ServerState,
+	className: string,
+	methodName: string,
+	args: unknown[],
+	request: Request,
+	result: unknown,
+) {
+	for (const hook of state.hooks) {
 		if (hook.phase === "result") await hook.fn(className, methodName, args, request, result);
 	}
 }
@@ -251,7 +273,8 @@ async function runResultHooks(className: string, methodName: string, args: unkno
  * chunk regardless of the upload size. The response is NDJSON: a `received` frame with size and hash, then a
  * `result` frame (status 201) or an `error` frame when the handler threw (status 200, temp file kept for a retry).
  */
-async function handleUploadPost(request: Request): Promise<Response> {
+async function handleUploadPost(state: ServerState, request: Request): Promise<Response> {
+	const { uploads } = state;
 	const { createHash } = await import("node:crypto");
 	const { open, readFile } = await import("node:fs/promises");
 	const startedAt = performance.now();
@@ -263,24 +286,24 @@ async function handleUploadPost(request: Request): Promise<Response> {
 	const contentEncoding = request.headers.get("content-encoding") || "identity";
 	const originalFilename = decodeHeader(request.headers.get("x-original-filename") || "");
 
-	const handlerEntry = uploadHandlers.get(handlerName);
+	const handlerEntry = state.uploadHandlers.get(handlerName);
 	if (!handlerEntry) return json(404, { error: `Upload handler "${handlerName}" not found` });
-	if (!(await runGuards("__upload__", handlerName, [originalSize], request))) {
+	if (!(await runGuards(state, "__upload__", handlerName, [originalSize], request))) {
 		return json(403, { error: "Forbidden by hook" });
 	}
 
 	// A resume needs a session whose file holds exactly `offset` bytes; anything else would corrupt the file.
 	const isResume = offset > 0;
 	if (isResume) {
-		if (!getSession(uploadId)) return json(404, { error: `No session found for uploadId "${uploadId}" to resume` });
-		const fileSize = await getTempFileSize(uploadId);
+		if (!uploads.getSession(uploadId)) return json(404, { error: `No session found for uploadId "${uploadId}" to resume` });
+		const fileSize = await uploads.getTempFileSize(uploadId);
 		if (fileSize !== offset) {
 			return json(409, { error: `Offset mismatch: client claims ${offset}, server has ${fileSize} bytes` });
 		}
-		updateSession(uploadId, { status: "uploading" });
+		uploads.updateSession(uploadId, { status: "uploading" });
 	}
-	await ensureUploadDir();
-	const session = isResume ? getSession(uploadId)! : createSession(uploadId, handlerName, originalSize);
+	await uploads.ensureUploadDir();
+	const session = isResume ? uploads.getSession(uploadId)! : uploads.createSession(uploadId, handlerName, originalSize);
 
 	let body: ReadableStream<Uint8Array> = request.body ?? new ReadableStream({ start: (c) => c.close() });
 	if (contentEncoding === "gzip" || contentEncoding === "deflate") {
@@ -303,8 +326,8 @@ async function handleUploadPost(request: Request): Promise<Response> {
 				}
 				if (!isResume) hash.update(chunk);
 				bytesReceived += chunk.byteLength;
-				updateSession(uploadId, { bytesReceived });
-				emitUploadEvent(uploadId, {
+				uploads.updateSession(uploadId, { bytesReceived });
+				uploads.emitUploadEvent(uploadId, {
 					type: "progress",
 					bytesReceived,
 					totalBytes: originalSize,
@@ -322,12 +345,17 @@ async function handleUploadPost(request: Request): Promise<Response> {
 		}
 		sha256Hex = hash.digest("hex");
 	} catch (error: unknown) {
-		updateSession(uploadId, { status: "error" });
-		emitUploadEvent(uploadId, { type: "error", error: errorMessage(error) });
+		uploads.updateSession(uploadId, { status: "error" });
+		uploads.emitUploadEvent(uploadId, { type: "error", error: errorMessage(error) });
 		log("ERROR", "upload failed", { handler: handlerName, uploadId, error: errorMessage(error) });
 		return json(500, { error: errorMessage(error) || "Unknown upload failure" });
 	}
 
+	// close() ran while the body arrived: it deleted the session, and the handler must not run on a closed server.
+	if (state.closed) {
+		await rm(session.tempFilePath, { force: true });
+		return json(503, { error: CLOSED_MESSAGE });
+	}
 	const durationMs = Math.round((performance.now() - startedAt) * 100) / 100;
 	const meta: UploadMeta = {
 		uploadId,
@@ -354,11 +382,11 @@ async function handleUploadPost(request: Request): Promise<Response> {
 			handlerResult = await (handlerEntry.fn as UploadStreamHandlerFn<unknown>)(fileChunks(session.tempFilePath), meta);
 		}
 	} catch (handlerError: unknown) {
-		updateSession(uploadId, { status: "error" });
-		emitUploadEvent(uploadId, { type: "error", error: errorMessage(handlerError) });
+		uploads.updateSession(uploadId, { status: "error" });
+		uploads.emitUploadEvent(uploadId, { type: "error", error: errorMessage(handlerError) });
 		log("ERROR", "upload handler threw", { handler: handlerName, uploadId, error: errorMessage(handlerError) });
 		// Result hooks run on handler errors too (with `undefined`), so an audit hook sees every finished upload.
-		await runResultHooks("__upload__", handlerName, [originalSize], request, undefined);
+		await runResultHooks(state, "__upload__", handlerName, [originalSize], request, undefined);
 		const errorFrame: UploadStreamFrame = {
 			type: "error",
 			error: {
@@ -372,11 +400,11 @@ async function handleUploadPost(request: Request): Promise<Response> {
 		});
 	}
 
-	updateSession(uploadId, { bytesReceived, status: "complete" });
-	emitUploadEvent(uploadId, { type: "complete", bytesReceived, totalBytes: originalSize, percent: 100 });
-	await runResultHooks("__upload__", handlerName, [originalSize], request, handlerResult);
+	uploads.updateSession(uploadId, { bytesReceived, status: "complete" });
+	uploads.emitUploadEvent(uploadId, { type: "complete", bytesReceived, totalBytes: originalSize, percent: 100 });
+	await runResultHooks(state, "__upload__", handlerName, [originalSize], request, handlerResult);
 	const resultFrame: UploadStreamFrame = { type: "result", value: handlerResult };
-	await cleanupSession(uploadId);
+	await uploads.cleanupSession(uploadId);
 	return new Response(`${DSON.stringify(receivedFrame)}\n${DSON.stringify(resultFrame)}\n`, {
 		status: 201,
 		headers: { "Content-Type": "application/x-ndjson" },
@@ -391,13 +419,16 @@ async function handleUploadPost(request: Request): Promise<Response> {
  * polling interval. The listener therefore receives every event the POST emits from its first chunk on. A stream
  * that saw neither a session nor an event within {@link SESSION_WAIT_MS} reports `Unknown upload`.
  */
-function handleUploadProgress(uploadId: string): Response {
+function handleUploadProgress(state: ServerState, uploadId: string): Response {
+	const { uploads } = state;
 	const encoder = new TextEncoder();
 	let unsubscribe = () => {};
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	let end = () => {};
 	const stop = () => {
 		clearTimeout(timer);
 		unsubscribe();
+		state.streams.delete(end);
 	};
 
 	const stream = new ReadableStream<Uint8Array>({
@@ -409,15 +440,18 @@ function handleUploadProgress(uploadId: string): Response {
 					controller.close();
 				}
 			};
-			const session = getSession(uploadId);
+			const session = uploads.getSession(uploadId);
 			if (session?.status === "complete") {
 				return send({ type: "complete", bytesReceived: session.bytesReceived, totalBytes: session.originalSize, percent: 100 });
 			}
 			if (session?.status === "error") return send({ type: "error", error: "Upload failed" });
-			unsubscribe = addUploadListener(uploadId, (event) => {
+			unsubscribe = uploads.addUploadListener(uploadId, (event) => {
 				clearTimeout(timer);
 				send(event);
 			});
+			// close() of the server ends the stream with an error event; the client stops waiting.
+			end = () => send({ type: "error", error: CLOSED_MESSAGE });
+			state.streams.add(end);
 			if (session && session.bytesReceived > 0) {
 				send({
 					type: "progress",
@@ -428,7 +462,7 @@ function handleUploadProgress(uploadId: string): Response {
 			}
 			if (!session) {
 				timer = setTimeout(() => {
-					if (!getSession(uploadId)) send({ type: "error", error: "Unknown upload" });
+					if (!uploads.getSession(uploadId)) send({ type: "error", error: "Unknown upload" });
 				}, SESSION_WAIT_MS);
 			}
 		},
@@ -445,12 +479,12 @@ function handleUploadProgress(uploadId: string): Response {
  * `Content-Length`, `Content-Disposition`, `Last-Modified` and `X-File-Sha256`; a `Range: bytes=a-b` header is
  * parsed into `rangeStart`/`rangeEnd` and left to the handler to honor.
  */
-async function handleDownload(url: URL, request: Request): Promise<Response> {
+async function handleDownload(state: ServerState, url: URL, request: Request): Promise<Response> {
 	const handlerName = url.searchParams.get("handler") || "";
 	const downloadId = url.searchParams.get("downloadId") || crypto.randomUUID();
-	const handlerEntry = downloadHandlers.get(handlerName);
+	const handlerEntry = state.downloadHandlers.get(handlerName);
 	if (!handlerEntry) return json(404, { error: `Download handler "${handlerName}" not found` });
-	if (!(await runGuards("__download__", handlerName, [downloadId], request))) {
+	if (!(await runGuards(state, "__download__", handlerName, [downloadId], request))) {
 		return json(403, { error: "Forbidden by hook" });
 	}
 
@@ -497,19 +531,6 @@ async function handleDownload(url: URL, request: Request): Promise<Response> {
 	}
 }
 
-/**
- * Adds a server hook. Guards run before every call, upload and download, in the order they were added; the first
- * one that returns `false` rejects with HTTP 403. Result hooks run after a successful call, before the response is
- * written; they do not run for generator methods, whose values are streamed, and they run with `undefined` after an
- * upload handler threw.
- *
- * For uploads `className` is `"__upload__"` and `args` is `[originalSize]`; for downloads `"__download__"` and
- * `[downloadId]`.
- */
-export function addHook(hook: ServerHook) {
-	hooks.push(hook);
-}
-
 /** Characters allowed in upload and download handler names; they appear in headers and query strings. */
 const HANDLER_NAME_RE = /^[a-zA-Z0-9._-]{1,128}$/;
 
@@ -519,136 +540,112 @@ function assertHandlerName(kind: "upload" | "download", name: string) {
 	}
 }
 
-/**
- * Registers a **buffered** upload handler: it receives the complete upload as one `Uint8Array`.
- *
- * Use it when the handler needs all bytes at once (parsing an archive, an image) and uploads fit in memory; for
- * anything larger use {@link addStreamingUploadHandler}. Registering a name again replaces the handler.
- *
- * @param name    - Handler name the client passes to `upload()`: letters, digits, `.`, `_`, `-`; max 128 chars.
- * @param handler - Called with `(data, meta)` after the body was received and hashed; its return value is
- *                  DSON-serialized into the `result` frame.
- *
- * @example
- * ```ts
- * addUploadHandler("avatar", async (data, meta) => {
- *   await writeFile(`avatars/${meta.uploadId}.png`, data);
- *   return { bytes: data.byteLength, sha256: meta.sha256 };
- * });
- * ```
- */
-export function addUploadHandler<T = unknown>(name: string, handler: UploadHandlerFn<T>): void {
-	assertHandlerName("upload", name);
-	uploadHandlers.set(name, { fn: handler as UploadHandlerFn<unknown>, mode: "buffered" });
+/** The registration methods of a server; documented on {@link RpcServer}. */
+function registrars(state: ServerState) {
+	return {
+		addHook(hook: ServerHook): void {
+			state.hooks.push(hook);
+		},
+		addUploadHandler<T = unknown>(name: string, handler: UploadHandlerFn<T>): void {
+			assertHandlerName("upload", name);
+			state.uploadHandlers.set(name, { fn: handler as UploadHandlerFn<unknown>, mode: "buffered" });
+		},
+		addStreamingUploadHandler<T = unknown>(name: string, handler: UploadStreamHandlerFn<T>): void {
+			assertHandlerName("upload", name);
+			state.uploadHandlers.set(name, { fn: handler as UploadStreamHandlerFn<unknown>, mode: "streaming" });
+		},
+		addDownloadHandler<T = unknown>(name: string, handler: DownloadHandlerFn<T>): void {
+			assertHandlerName("download", name);
+			state.downloadHandlers.set(name, { fn: handler as DownloadHandlerFn<unknown>, mode: "buffered" });
+		},
+		addStreamingDownloadHandler<T = unknown>(name: string, handler: DownloadStreamHandlerFn<T>): void {
+			assertHandlerName("download", name);
+			state.downloadHandlers.set(name, { fn: handler as DownloadStreamHandlerFn<unknown>, mode: "streaming" });
+		},
+	};
 }
 
-/**
- * Registers a **streaming** upload handler: it receives a `ReadableStream<Uint8Array>` of the upload.
- *
- * The stream reads the verified temp file in 256 KiB chunks, so the handler's memory stays bounded however large
- * the upload is. It starts after the last byte arrived (`meta.sha256` is final) and always begins at byte 0, also
- * for resumed uploads.
- *
- * @param name    - Handler name, same rules as {@link addUploadHandler}.
- * @param handler - Called with `(stream, meta)`; its return value becomes the `result` frame.
- *
- * @example
- * ```ts
- * addStreamingUploadHandler("ingest", async (stream, meta) => {
- *   let bytes = 0;
- *   for await (const chunk of stream) bytes += chunk.byteLength;
- *   return { bytes };
- * });
- * ```
- */
-export function addStreamingUploadHandler<T = unknown>(name: string, handler: UploadStreamHandlerFn<T>): void {
-	assertHandlerName("upload", name);
-	uploadHandlers.set(name, { fn: handler as UploadStreamHandlerFn<unknown>, mode: "streaming" });
-}
-
-/** Removes every upload handler. For test isolation. */
-export function clearUploadHandlers(): void {
-	uploadHandlers.clear();
-}
-
-/**
- * Registers a **buffered** download handler: it returns the whole file as a `Uint8Array`, or `{ data, fileMeta }`
- * to set the content type, file name, hash and modification time.
- *
- * @param name    - Handler name the client passes to `download()`; same rules as upload handlers.
- * @param handler - Called with `(meta)` per request; `meta.downloadId` is the client's ID (e.g. a file ID).
- *
- * @example
- * ```ts
- * addDownloadHandler("report", async ({ downloadId }) => {
- *   const data = new TextEncoder().encode(`report ${downloadId}`);
- *   return { data, fileMeta: { size: data.byteLength, contentType: "text/plain", filename: "report.txt" } };
- * });
- * ```
- */
-export function addDownloadHandler<T = unknown>(name: string, handler: DownloadHandlerFn<T>): void {
-	assertHandlerName("download", name);
-	downloadHandlers.set(name, { fn: handler as DownloadHandlerFn<unknown>, mode: "buffered" });
-}
-
-/**
- * Registers a **streaming** download handler: it returns `{ stream, fileMeta }`, and the stream is piped to the
- * client as it is read, so a large file is never held in memory. `fileMeta.size` becomes `Content-Length` and must
- * be exact.
- *
- * @example
- * ```ts
- * addStreamingDownloadHandler("video", async () => {
- *   const file = await openAsBlob("video.mp4"); // node:fs
- *   return { stream: file.stream(), fileMeta: { size: file.size, contentType: "video/mp4", filename: "video.mp4" } };
- * });
- * ```
- */
-export function addStreamingDownloadHandler<T = unknown>(name: string, handler: DownloadStreamHandlerFn<T>): void {
-	assertHandlerName("download", name);
-	downloadHandlers.set(name, { fn: handler as DownloadStreamHandlerFn<unknown>, mode: "streaming" });
-}
-
-/** Removes every download handler. For test isolation. */
-export function clearDownloadHandlers(): void {
-	downloadHandlers.clear();
-}
-
-/**
- * Registers the API namespaces: each key becomes the name the client calls (`rpc.<key>`), each value is a class
- * (a fresh instance per call) or a plain object of functions (shared).
- *
- * **First registration wins**: while the registry holds entries, further calls are ignored. Why: module code that
- * registers the API may run again (hot reload, a second import path of the same file), and silently mixing two
- * versions of an API would be worse than keeping the first. Pass `{}` to empty the registry, then register again;
- * {@link clearRpcServer} also removes hooks and handlers.
- *
- * @param ns - Map of namespace name => class constructor or plain-object module.
- *
- * @example
- * createRpcServer({ UserApi, OrderApi, MathUtils });
- */
-export function createRpcServer(ns: ApiNamespace, options: RpcServerOptions = {}) {
-	if (Object.keys(ns).length === 0) {
-		rpcApiEntries.clear();
-		registry.docs.clear();
-		return;
-	}
-	if (rpcApiEntries.size > 0) return;
-	for (const [name, entry] of Object.entries(ns)) {
-		rpcApiEntries.set(name, entry);
-	}
-	for (const doc of options.docs ?? []) {
+/** Puts the namespaces and their docs into the state; docs that name no namespace or no exposed method are logged. */
+function register(state: ServerState, ns: ApiNamespace, docs: RpcApiSchema = []) {
+	for (const [name, entry] of Object.entries(ns)) state.entries.set(name, entry);
+	for (const doc of docs) {
 		const name = doc.kind === "class" ? doc.className : doc.moduleName;
-		if (!rpcApiEntries.has(name)) {
+		const entry = state.entries.get(name);
+		if (!entry) {
 			log("WARN", "rpc docs name a namespace the server does not have", { namespace: name });
 			continue;
 		}
-		const exposed = exposedMethods(rpcApiEntries.get(name)!);
+		const exposed = exposedMethods(entry);
 		const unknown = Object.keys(doc.methods ?? {}).filter((method) => !exposed.has(method));
 		if (unknown.length) log("WARN", "rpc docs name methods the server does not expose", { namespace: name, methods: unknown.join(",") });
-		registry.docs.set(name, doc);
+		state.docs.set(name, doc);
 	}
+}
+
+/**
+ * True for the paths and methods {@link dispatch} answers; see {@link RpcServer.matches}. It reads the end of the
+ * path, as `dispatch` does, so the two agree under any prefix.
+ */
+function isRpcRequest(method: string, pathname: string): boolean {
+	// A preflight is the host's to answer: `dispatch` would read it as a call and answer 400.
+	if (method === "OPTIONS") return false;
+	const path = pathname.replace(/\/+$/, "");
+	if (path.endsWith(RPC_SCHEMA_PATH)) return true;
+	if (method === "POST") return path.endsWith(RPC_PATH) || path.endsWith(RPC_UPLOAD_PATH);
+	if (method === "HEAD") return /\/rpc\/upload\/[^/]+$/.test(path);
+	if (method === "GET") return path.endsWith(RPC_DOWNLOAD_PATH) || /\/rpc\/upload\/progress\/[^/]+$/.test(path);
+	return false;
+}
+
+/**
+ * Closes a server: later requests get 503, open streams end, and the temp files of its sessions are deleted, with
+ * the upload directory when the server created it.
+ */
+async function close(state: ServerState, ownsUploadDir: boolean) {
+	if (state.closed) return;
+	state.closed = true;
+	// Each ender deletes itself from the set, which a Set iteration allows. One that throws (a stream its consumer
+	// already gave up) must not keep the temp files below from being deleted.
+	for (const end of state.streams) {
+		try {
+			end();
+		} catch {
+			// the stream is gone either way
+		}
+	}
+	state.streams.clear();
+	await state.uploads.clearAllSessions();
+	if (ownsUploadDir) await rm(state.uploads.getUploadDir(), { recursive: true, force: true });
+}
+
+/**
+ * Creates an RPC server: an endpoint for `ns`, with its own hooks, upload and download handlers and upload sessions.
+ * Every call returns a new server that shares nothing with any other; mount its `fetch` on any host.
+ *
+ * @param ns      - Map of namespace name => class constructor (a fresh instance per call) or plain-object module
+ *                  (shared). Each key becomes the name the client calls (`rpc.<key>`).
+ * @param options - `docs` from `defuss-rpc schema`, the `uploadDir` for temp files, the server's `name`.
+ *
+ * @example
+ * ```ts
+ * const rpc = createRpcServer({ UserApi, OrderApi, MathUtils });
+ * rpc.addUploadHandler("avatar", (data) => ({ bytes: data.byteLength }));
+ * Bun.serve({ fetch: rpc.fetch });
+ * ```
+ */
+export function createRpcServer(ns: ApiNamespace, options: RpcServerOptions = {}): RpcServer {
+	const state = createState(options.uploadDir ?? join(tmpdir(), "defuss-uploads", crypto.randomUUID()));
+	register(state, ns, options.docs);
+	return {
+		name: options.name ?? "defuss-rpc",
+		get uploadDir() {
+			return state.uploads.getUploadDir();
+		},
+		matches: (request) => isRpcRequest(request.method, new URL(request.url).pathname),
+		fetch: (request) => (state.closed ? Promise.resolve(json(503, { error: CLOSED_MESSAGE })) : dispatch(state, request)),
+		...registrars(state),
+		close: () => close(state, !options.uploadDir),
+	};
 }
 
 /** The documentation fields of a documented method, merged over the runtime descriptor (which keeps async / generator). */
@@ -662,24 +659,11 @@ function documented(runtime: Record<string, RpcMethodDescriptor>, doc: RpcSchema
 	return methods;
 }
 
-/**
- * Empties the namespace registry, the hooks, the upload and download handlers, and deletes the temp files of all
- * upload sessions. For test isolation: every test starts from an empty server.
- */
-export async function clearRpcServer() {
-	rpcApiEntries.clear();
-	registry.docs.clear();
-	hooks.length = 0;
-	uploadHandlers.clear();
-	downloadHandlers.clear();
-	await clearAllSessions();
-}
-
 /** The `/rpc/schema` body: one descriptor per registered namespace. */
-function buildSchema(): RpcSchemaEntry[] {
+function buildSchema(state: ServerState): RpcSchemaEntry[] {
 	const schemaEntries: RpcSchemaEntry[] = [];
-	for (const [name, entry] of rpcApiEntries) {
-		const doc = registry.docs.get(name);
+	for (const [name, entry] of state.entries) {
+		const doc = state.docs.get(name);
 		const description = doc?.description ? { description: doc.description } : {};
 		if (isRpcClass(entry)) {
 			const desc = describeInstance(entry.prototype) as {
@@ -702,16 +686,16 @@ function buildSchema(): RpcSchemaEntry[] {
 }
 
 /** Dispatches one RPC call body to its namespace entry. */
-async function handleCall(request: Request): Promise<Response> {
+async function handleCall(state: ServerState, request: Request): Promise<Response> {
 	const call = parseRpcCallDescriptor(await request.text());
 	if (!call) {
 		return json(400, { error: "Invalid RPC call: expected { className, methodName, args: [] } as DSON or JSON" });
 	}
 	const { className, methodName, args } = call;
 
-	if (!(await runGuards(className, methodName, args, request))) return json(403, { error: "Forbidden by hook" });
+	if (!(await runGuards(state, className, methodName, args, request))) return json(403, { error: "Forbidden by hook" });
 
-	const entry = rpcApiEntries.get(className);
+	const entry = state.entries.get(className);
 	if (!entry) return json(404, { error: `Namespace ${className} not found` });
 
 	const isClass = isRpcClass(entry);
@@ -731,6 +715,7 @@ async function handleCall(request: Request): Promise<Response> {
 		if (describeFn(fn).generator) {
 			const iterable = result as AsyncIterable<unknown> & Iterable<unknown>;
 			return streamGeneratorResponse(
+				state,
 				typeof iterable[Symbol.asyncIterator] === "function"
 					? iterable[Symbol.asyncIterator]()
 					: iterable[Symbol.iterator](),
@@ -743,53 +728,32 @@ async function handleCall(request: Request): Promise<Response> {
 		return json(500, { error: `Error calling ${what} ${methodName}: ${errorMessage(error)}` });
 	}
 
-	await runResultHooks(className, methodName, args, request, result);
+	await runResultHooks(state, className, methodName, args, request, result);
 	return new Response(DSON.stringify(result), { headers: { "Content-Type": "application/json" } });
 }
 
-/**
- * The defuss-rpc request handler: a Fetch API function `({ request }) => Promise<Response>`.
- *
- * Mount it where your runtime hands you a `Request`: an Astro route (`export const ALL = rpcRoute` in
- * `src/pages/rpc/[...all].ts`), `Bun.serve({ fetch: (request) => rpcRoute({ request }) })`, or `ExpressRpcServer`,
- * which adds CORS, limits and gzip on the framework of its provider. Routing looks at the end of the path, so any
- * prefix (`/api/v1/rpc`) works.
- *
- * | Method | Path                          | Response                                                    |
- * |--------|-------------------------------|-------------------------------------------------------------|
- * | any    | `…/rpc/schema`                | JSON schema of all registered namespaces                    |
- * | POST   | `…/rpc`                       | DSON result, or NDJSON frames for generator methods         |
- * | POST   | `…/rpc/upload`                | NDJSON `received` + `result`/`error` frames                 |
- * | HEAD   | `…/rpc/upload/{uploadId}`     | `X-Upload-Offset` etc. for resuming                         |
- * | GET    | `…/rpc/upload/progress/{id}`  | Server-Sent Events with upload progress                     |
- * | GET    | `…/rpc/download?handler=&downloadId=` | the file, with metadata headers                     |
- *
- * **Call body** (`POST /rpc`): DSON (or plain JSON) `{ className, methodName, args }`.
- *
- * **Status codes**: `400` malformed call body, `403` a guard returned `false`, `404` unknown namespace, method or
- * handler, `409` resume offset mismatch, `500` the method or handler threw (the message is in `error`).
- */
-export const rpcRoute: RpcRoute = async ({ request }) => {
+/** Answers one request from `state`; the routes are listed on {@link RpcServer.fetch}. */
+async function dispatch(state: ServerState, request: Request): Promise<Response> {
 	const url = new URL(request.url);
 	// Normalize trailing slashes so "/rpc/schema/" and "/rpc/schema" resolve identically.
 	const pathname = url.pathname.replace(/\/+$/, "");
 
-	if (pathname.endsWith(RPC_SCHEMA_PATH)) return json(200, buildSchema());
+	if (pathname.endsWith(RPC_SCHEMA_PATH)) return json(200, buildSchema(state));
 
 	if (request.method === "GET" && pathname.includes(RPC_UPLOAD_PROGRESS_PATH)) {
 		const start = pathname.lastIndexOf(RPC_UPLOAD_PROGRESS_PATH) + RPC_UPLOAD_PROGRESS_PATH.length;
-		return handleUploadProgress(sanitizeUploadId(pathname.slice(start)));
+		return handleUploadProgress(state, sanitizeUploadId(pathname.slice(start)));
 	}
 
 	if (request.method === "HEAD" && pathname.includes(`${RPC_UPLOAD_PATH}/`)) {
 		const start = pathname.lastIndexOf(`${RPC_UPLOAD_PATH}/`) + RPC_UPLOAD_PATH.length + 1;
 		const uploadId = sanitizeUploadId(pathname.slice(start));
-		const session = getSession(uploadId);
+		const session = state.uploads.getSession(uploadId);
 		if (!session) return new Response(null, { status: 404 });
 		return new Response(null, {
 			status: 200,
 			headers: {
-				"X-Upload-Offset": String(await getTempFileSize(uploadId)),
+				"X-Upload-Offset": String(await state.uploads.getTempFileSize(uploadId)),
 				"X-Upload-Handler": session.handlerName,
 				"X-Original-Size": String(session.originalSize),
 				"X-Upload-Status": session.status,
@@ -797,12 +761,120 @@ export const rpcRoute: RpcRoute = async ({ request }) => {
 		});
 	}
 
-	if (request.method === "POST" && pathname.endsWith(RPC_UPLOAD_PATH)) return handleUploadPost(request);
+	if (request.method === "POST" && pathname.endsWith(RPC_UPLOAD_PATH)) return handleUploadPost(state, request);
 
-	if (request.method === "GET" && pathname.endsWith(RPC_DOWNLOAD_PATH)) return handleDownload(url, request);
+	if (request.method === "GET" && pathname.endsWith(RPC_DOWNLOAD_PATH)) return handleDownload(state, url, request);
 
-	return handleCall(request);
-};
+	return handleCall(state, request);
+}
+
+/*
+ * The deprecated global server: the module functions below act on one server per process, as every function of this
+ * module did before 4.0. It lives on `globalThis` under a registry symbol because one process can load this module
+ * more than once (the ESM and CommonJS builds, a bundler's copy in an SSR build), and a handler registered through
+ * one copy must be served by every other. `createRpcServer()` never reads or writes it.
+ */
+const globalState = ((globalThis as Record<symbol, unknown>)[Symbol.for("defuss-rpc.global-server")] ??= createState(
+	join(tmpdir(), "defuss-uploads"),
+)) as ServerState;
+const globalRegistrars = registrars(globalState);
+
+/**
+ * Registers namespaces on the deprecated global server, which `rpcRoute`, the module functions `addHook`,
+ * `addUploadHandler`, … and `ExpressRpcServer` without `rpc` serve. This is what `createRpcServer(ns)` did before 4.0.
+ *
+ * The first registration wins: while the global server holds namespaces, a further call is ignored with a WARN log
+ * line. Pass `{}` to empty it, then register again; {@link clearRpcServer} also removes hooks and handlers.
+ *
+ * @deprecated Use `const rpc = createRpcServer(ns)` and pass `rpc` where the global server was implied: `rpc.fetch`
+ * for `rpcRoute`, `rpc.addHook()` for `addHook()`, `new ExpressRpcServer({ rpc })`. README.md, section "Migrating to
+ * 4.0", lists every replacement.
+ */
+export function registerGlobalRpcApi(ns: ApiNamespace, options: Pick<RpcServerOptions, "docs"> = {}): void {
+	if (Object.keys(ns).length === 0) {
+		globalState.entries.clear();
+		globalState.docs.clear();
+		return;
+	}
+	if (globalState.entries.size > 0) {
+		log("WARN", "registerGlobalRpcApi ignored: the global server already has namespaces; pass {} first or use createRpcServer()", {
+			namespaces: Object.keys(ns).join(","),
+		});
+		return;
+	}
+	register(globalState, ns, options.docs);
+}
+
+/**
+ * Answers a request from the deprecated global server; same routes as {@link RpcServer.fetch}.
+ * @deprecated Use `rpc.fetch(request)` of a server from `createRpcServer()`; in an Astro route
+ * `export const ALL: APIRoute = ({ request }) => rpc.fetch(request)`.
+ */
+export const rpcRoute: RpcRoute = ({ request }) => dispatch(globalState, request);
+
+/** @deprecated Use `rpc.addHook()` of a server from `createRpcServer()`. */
+export function addHook(hook: ServerHook): void {
+	globalRegistrars.addHook(hook);
+}
+
+/** @deprecated Use `rpc.addUploadHandler()` of a server from `createRpcServer()`. */
+export function addUploadHandler<T = unknown>(name: string, handler: UploadHandlerFn<T>): void {
+	globalRegistrars.addUploadHandler(name, handler);
+}
+
+/** @deprecated Use `rpc.addStreamingUploadHandler()` of a server from `createRpcServer()`. */
+export function addStreamingUploadHandler<T = unknown>(name: string, handler: UploadStreamHandlerFn<T>): void {
+	globalRegistrars.addStreamingUploadHandler(name, handler);
+}
+
+/** @deprecated Use `rpc.addDownloadHandler()` of a server from `createRpcServer()`. */
+export function addDownloadHandler<T = unknown>(name: string, handler: DownloadHandlerFn<T>): void {
+	globalRegistrars.addDownloadHandler(name, handler);
+}
+
+/** @deprecated Use `rpc.addStreamingDownloadHandler()` of a server from `createRpcServer()`. */
+export function addStreamingDownloadHandler<T = unknown>(name: string, handler: DownloadStreamHandlerFn<T>): void {
+	globalRegistrars.addStreamingDownloadHandler(name, handler);
+}
+
+/** Removes every upload handler of the global server. @deprecated A server from `createRpcServer()` starts empty. */
+export function clearUploadHandlers(): void {
+	globalState.uploadHandlers.clear();
+}
+
+/** Removes every download handler of the global server. @deprecated A server from `createRpcServer()` starts empty. */
+export function clearDownloadHandlers(): void {
+	globalState.downloadHandlers.clear();
+}
+
+/**
+ * Empties the global server: namespaces, hooks, upload and download handlers, and the temp files of its sessions.
+ * @deprecated Use `await rpc.close()` on a server from `createRpcServer()`, and a new server for a fresh start.
+ */
+export async function clearRpcServer(): Promise<void> {
+	globalState.entries.clear();
+	globalState.docs.clear();
+	globalState.hooks.length = 0;
+	globalState.uploadHandlers.clear();
+	globalState.downloadHandlers.clear();
+	await globalState.uploads.clearAllSessions();
+}
+
+/**
+ * The global server's directory for upload temp files (default `<os tmpdir>/defuss-uploads`).
+ * @deprecated Use `rpc.uploadDir` of a server from `createRpcServer()`.
+ */
+export function getUploadDir(): string {
+	return globalState.uploads.getUploadDir();
+}
+
+/**
+ * Sets the global server's directory for upload temp files; sessions that already started keep their old path.
+ * @deprecated Use `createRpcServer(ns, { uploadDir })`.
+ */
+export function setUploadDir(dir: string): void {
+	globalState.uploads.setUploadDir(dir);
+}
 
 /** Describes a plain-object module's own enumerable functions for the schema. */
 export function describeModule(name: string, obj: RpcApiModule): RpcSchemaEntry {

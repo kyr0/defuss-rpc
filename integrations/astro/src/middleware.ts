@@ -10,7 +10,7 @@
  */
 import { defineMiddleware } from "astro/middleware";
 import { getRpcConfig, getRpcEndpoint, setRpcEndpoint, setRpcServer } from "defuss-rpc-vite/rpc-state";
-import { createRpcServer } from "defuss-rpc/server";
+import { registerGlobalRpcApi } from "defuss-rpc/server";
 import { ExpressRpcServer } from "defuss-rpc/express-server";
 
 declare global {
@@ -32,8 +32,9 @@ function startFromConfig(): Promise<string> {
 	starting ??= (async () => {
 		const config = getRpcConfig();
 		if (!config) return "";
-		createRpcServer(config.api);
+		if (!config.rpc) registerGlobalRpcApi(config.api!);
 		const server = new ExpressRpcServer({
+			rpc: config.rpc,
 			provider: config.provider,
 			port: config.port,
 			protocol: config.protocol,

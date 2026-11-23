@@ -98,7 +98,7 @@ export type RpcApiSchema = RpcSchemaEntry[];
  * Keys become the namespace identifiers used in RPC calls (i.e. `className`).
  *
  * @example
- * createRpcServer({ UserApi, OrderApi, mathUtils });
+ * const rpc = createRpcServer({ UserApi, OrderApi, mathUtils });
  */
 export interface ApiNamespace {
 	[name: string]: RpcApiEntry;
@@ -112,14 +112,162 @@ export interface RpcServerOptions {
 	 * a method the server does not expose is left out.
 	 */
 	docs?: RpcApiSchema;
+	/**
+	 * Directory for the temp files of running uploads. Default: a directory of the server's own,
+	 * `<os tmpdir>/defuss-uploads/<random UUID>`, created on the first upload and removed by `close()`.
+	 *
+	 * Point it at a volume with room for the largest expected upload: the whole body is written there before the
+	 * handler runs. Give every server its own directory, because temp files are named by upload ID; `close()` deletes
+	 * this server's temp files and leaves a directory you passed in place.
+	 */
+	uploadDir?: string;
+	/** The server's {@link RpcServer.name}, for a host that serves several endpoints. @default `"defuss-rpc"` */
+	name?: string;
 }
 
 /**
- * The request handler behind every endpoint: a Fetch API function from `Request` to `Response`.
+ * One RPC endpoint, created by `createRpcServer()`: its namespaces, hooks, upload and download handlers and upload
+ * sessions, answered by {@link RpcServer.fetch}.
  *
- * Why its own type instead of Astro's `APIRoute`: the same handler serves Astro routes, `Bun.serve`, `ExpressRpcServer`
- * and tests, and consumers without Astro must not need Astro's types. Astro's `APIContext` has a
- * `request`, so `rpcRoute` is assignable to `APIRoute` as it is.
+ * It owns no listener and no process-wide state: mount `fetch` in `Bun.serve`, an Astro route, `ExpressRpcServer`
+ * (`{ rpc }`), a defuss-serve plugin list or any host that hands it a `Request`. Two servers in one process share
+ * nothing, not even namespace names or upload IDs.
+ *
+ * @example
+ * ```ts
+ * const rpc = createRpcServer({ MathApi });
+ * rpc.addHook({ phase: "guard", fn: (ns) => ns !== "AdminApi" });
+ * Bun.serve({ fetch: rpc.fetch });
+ * ```
+ */
+export interface RpcServer {
+	/** The name given in the options, `"defuss-rpc"` by default. */
+	readonly name: string;
+	/** The directory that holds the temp files of running uploads (see {@link RpcServerOptions.uploadDir}). */
+	readonly uploadDir: string;
+	/**
+	 * True for the requests this server answers: `…/rpc/schema` (any method but `OPTIONS`), `POST …/rpc`,
+	 * `POST …/rpc/upload`, `HEAD …/rpc/upload/{id}`, `GET …/rpc/upload/progress/{id}` and `GET …/rpc/download`.
+	 * Routing looks at the end of the path, so any prefix (`/api/v1/rpc`) works. A host answers other requests itself,
+	 * CORS preflights included.
+	 */
+	matches(request: Request): boolean;
+	/**
+	 * Answers one request; bound to this server, so `Bun.serve({ fetch: rpc.fetch })` works as it is.
+	 *
+	 * | Method | Path                          | Response                                                    |
+	 * |--------|-------------------------------|-------------------------------------------------------------|
+	 * | any    | `…/rpc/schema`                | JSON schema of all registered namespaces                    |
+	 * | POST   | `…/rpc`                       | DSON result, or NDJSON frames for generator methods         |
+	 * | POST   | `…/rpc/upload`                | NDJSON `received` + `result`/`error` frames                 |
+	 * | HEAD   | `…/rpc/upload/{uploadId}`     | `X-Upload-Offset` etc. for resuming                         |
+	 * | GET    | `…/rpc/upload/progress/{id}`  | Server-Sent Events with upload progress                     |
+	 * | GET    | `…/rpc/download?handler=&downloadId=` | the file, with metadata headers                     |
+	 *
+	 * **Call body** (`POST /rpc`): DSON (or plain JSON) `{ className, methodName, args }`. Any other path is read as
+	 * a call too; ask {@link matches} first when other routes share the host.
+	 *
+	 * **Status codes**: `400` malformed call body, `403` a guard returned `false`, `404` unknown namespace, method or
+	 * handler, `409` resume offset mismatch, `500` the method or handler threw (the message is in `error`), `503` the
+	 * server is closed.
+	 *
+	 * It adds no CORS headers, reads call bodies without a size limit and runs a call whatever its `Content-Type`;
+	 * `ExpressRpcServer` adds all three, which a browser-facing host needs.
+	 */
+	fetch(request: Request): Promise<Response>;
+	/**
+	 * Adds a server hook. Guards run before every call, upload and download, in the order they were added; the first
+	 * one that returns `false` rejects with HTTP 403. Result hooks run after a successful call, before the response is
+	 * written; they do not run for generator methods, whose values are streamed, and they run with `undefined` after
+	 * an upload handler threw.
+	 *
+	 * For uploads `className` is `"__upload__"` and `args` is `[originalSize]`; for downloads `"__download__"` and
+	 * `[downloadId]`.
+	 */
+	addHook(hook: ServerHook): void;
+	/**
+	 * Registers a **buffered** upload handler: it receives the complete upload as one `Uint8Array`.
+	 *
+	 * Use it when the handler needs all bytes at once (parsing an archive, an image) and uploads fit in memory; for
+	 * anything larger use {@link addStreamingUploadHandler}. Registering a name again replaces the handler.
+	 *
+	 * @param name    - Handler name the client passes to `upload()`: letters, digits, `.`, `_`, `-`; max 128 chars.
+	 * @param handler - Called with `(data, meta)` after the body was received and hashed; its return value is
+	 *                  DSON-serialized into the `result` frame.
+	 * @throws when `name` breaks the rules above.
+	 *
+	 * @example
+	 * ```ts
+	 * rpc.addUploadHandler("avatar", async (data, meta) => {
+	 *   await writeFile(`avatars/${meta.uploadId}.png`, data);
+	 *   return { bytes: data.byteLength, sha256: meta.sha256 };
+	 * });
+	 * ```
+	 */
+	addUploadHandler<T = unknown>(name: string, handler: UploadHandlerFn<T>): void;
+	/**
+	 * Registers a **streaming** upload handler: it receives a `ReadableStream<Uint8Array>` of the upload.
+	 *
+	 * The stream reads the verified temp file in 256 KiB chunks, so the handler's memory stays bounded however large
+	 * the upload is. It starts after the last byte arrived (`meta.sha256` is final) and always begins at byte 0, also
+	 * for resumed uploads.
+	 *
+	 * @param name    - Handler name, same rules as {@link addUploadHandler}.
+	 * @param handler - Called with `(stream, meta)`; its return value becomes the `result` frame.
+	 *
+	 * @example
+	 * ```ts
+	 * rpc.addStreamingUploadHandler("ingest", async (stream, meta) => {
+	 *   let bytes = 0;
+	 *   for await (const chunk of stream) bytes += chunk.byteLength;
+	 *   return { bytes };
+	 * });
+	 * ```
+	 */
+	addStreamingUploadHandler<T = unknown>(name: string, handler: UploadStreamHandlerFn<T>): void;
+	/**
+	 * Registers a **buffered** download handler: it returns the whole file as a `Uint8Array`, or `{ data, fileMeta }`
+	 * to set the content type, file name, hash and modification time.
+	 *
+	 * @param name    - Handler name the client passes to `download()`; same rules as upload handlers.
+	 * @param handler - Called with `(meta)` per request; `meta.downloadId` is the client's ID (e.g. a file ID).
+	 *
+	 * @example
+	 * ```ts
+	 * rpc.addDownloadHandler("report", async ({ downloadId }) => {
+	 *   const data = new TextEncoder().encode(`report ${downloadId}`);
+	 *   return { data, fileMeta: { size: data.byteLength, contentType: "text/plain", filename: "report.txt" } };
+	 * });
+	 * ```
+	 */
+	addDownloadHandler<T = unknown>(name: string, handler: DownloadHandlerFn<T>): void;
+	/**
+	 * Registers a **streaming** download handler: it returns `{ stream, fileMeta }`, and the stream is piped to the
+	 * client as it is read, so a large file is never held in memory. `fileMeta.size` becomes `Content-Length` and must
+	 * be exact.
+	 *
+	 * @example
+	 * ```ts
+	 * rpc.addStreamingDownloadHandler("video", async () => {
+	 *   const file = await openAsBlob("video.mp4"); // node:fs
+	 *   return { stream: file.stream(), fileMeta: { size: file.size, contentType: "video/mp4", filename: "video.mp4" } };
+	 * });
+	 * ```
+	 */
+	addStreamingDownloadHandler<T = unknown>(name: string, handler: DownloadStreamHandlerFn<T>): void;
+	/**
+	 * Closes this server and nothing else: later requests get 503, running generator streams end with an `error`
+	 * frame (their `finally` blocks run), open progress streams end with an `error` event, and the temp files of its
+	 * upload sessions are deleted, with the default upload directory. A listener that mounts `fetch` keeps running.
+	 * Calling it again does nothing.
+	 */
+	close(): Promise<void>;
+}
+
+/**
+ * The shape of the deprecated `rpcRoute`: a Fetch API function from `{ request }` to `Response`. Astro's `APIContext`
+ * has a `request`, so a function of this type is assignable to `APIRoute`; defuss-mcp's `exposeRpc()` takes one too.
+ * For a server from `createRpcServer()` write `({ request }) => rpc.fetch(request)`.
  */
 export type RpcRoute = (context: { request: Request }) => Promise<Response>;
 
@@ -129,7 +277,7 @@ export type RpcRoute = (context: { request: Request }) => Promise<Response>;
 export interface RpcCallDescriptor {
 	/**
 	 * Optional request ID - reserved for future request-correlation and deduplication.
-	 * Not currently consumed by `rpcRoute`.
+	 * Not currently consumed by the server.
 	 */
 	id?: string | number;
 	/**

@@ -1,5 +1,5 @@
 /**
- * defuss-rpc-astro: the Astro integration of defuss-rpc, `integrations: [defussRpc({ api })]` in `astro.config.ts`.
+ * defuss-rpc-astro: the Astro integration of defuss-rpc, `integrations: [defussRpc({ rpc })]` in `astro.config.ts`.
  *
  * Why an integration on top of the Vite plugin: Astro runs Vite, so the plugin starts the RPC server and serves
  * `virtual:defuss-rpc` in `astro dev`; the integration adds the one thing Vite cannot, a middleware that writes the
@@ -15,17 +15,18 @@ import { setRpcConfig } from "defuss-rpc-vite/rpc-state";
 /**
  * Creates the Astro integration.
  *
- * @param options - The Vite plugin's options (`api`, `provider`, `port`, `host`, `watch`, `endpoint`, …).
+ * @param options - The Vite plugin's options (`rpc`, `provider`, `port`, `host`, `watch`, `endpoint`, …).
  *
  * @example
  * ```ts
  * // astro.config.ts
  * import { defineConfig } from "astro/config";
  * import { defussRpc } from "defuss-rpc-astro";
+ * import { createRpcServer } from "defuss-rpc/server";
  * import RpcApi from "./src/rpc.js";
  *
  * // `bunx --bun astro dev`: Bun.serve on port 63920. On Node.js add `provider: expressProvider()`.
- * export default defineConfig({ integrations: [defussRpc({ api: RpcApi })] });
+ * export default defineConfig({ integrations: [defussRpc({ rpc: createRpcServer(RpcApi) })] });
  * ```
  *
  * Declare the local's type in `src/env.d.ts` when your project does not see this package's global declaration:

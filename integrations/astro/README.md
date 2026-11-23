@@ -18,6 +18,7 @@ bun add express
 ```ts
 import { defineConfig } from "astro/config";
 import { defussRpc } from "defuss-rpc-astro";
+import { createRpcServer } from "defuss-rpc/server";
 import RpcApi from "./api.ts";
 
 export default defineConfig({
@@ -25,7 +26,7 @@ export default defineConfig({
   // On Node.js add `provider: expressProvider()`.
   integrations: [
     defussRpc({
-      api: RpcApi,
+      rpc: createRpcServer(RpcApi),
       host: "127.0.0.1",
       watch: ["api.ts"],
     }),

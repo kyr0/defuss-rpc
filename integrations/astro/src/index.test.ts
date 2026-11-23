@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getRpcClient } from "defuss-rpc/client";
 import { expressProvider } from "defuss-rpc/providers/express";
-import { clearRpcServer } from "defuss-rpc/server";
+import { clearRpcServer, createRpcServer } from "defuss-rpc/server";
 import { getRpcServer, setRpcConfig, setRpcEndpoint } from "defuss-rpc-vite/rpc-state";
 import { defussRpc } from "./index.js";
 import { onRequest } from "./middleware.js";
@@ -21,7 +21,7 @@ describe("defussRpc Astro integration", () => {
 	});
 
 	it("adds the Vite plugin and a pre middleware that this package exports", async () => {
-		const integration = defussRpc({ api: { TestMathModule }, provider });
+		const integration = defussRpc({ rpc: createRpcServer({ TestMathModule }), provider });
 		const updates: any[] = [];
 		const middlewares: any[] = [];
 		const setup = integration.hooks["astro:config:setup"] as Function;
@@ -33,16 +33,20 @@ describe("defussRpc Astro integration", () => {
 		expect(exports).toHaveProperty("./middleware");
 	});
 
-	it("a second copy of the modules sees the endpoint and registrations of the first", async () => {
+	it("a second copy of the modules sees the endpoint, the RPC server and the global registrations of the first", async () => {
 		// Astro bundles packages that peer on astro into its SSR build, so the middleware runs in another module copy
 		// than the integration; resetModules() gives this test such a fresh copy.
 		setRpcEndpoint("http://127.0.0.1:1234");
+		const rpc = createRpcServer({ TestMathModule });
+		setRpcConfig({ rpc });
 		const { addUploadHandler } = await import("defuss-rpc/server");
 		addUploadHandler("shared-handler", () => 1);
 		vi.resetModules();
 		const copy = await import("defuss-rpc-vite/rpc-state");
 		const middleware = await import("./middleware.js");
 		expect(copy.getRpcEndpoint()).toBe("http://127.0.0.1:1234");
+		expect(copy.getRpcConfig()?.rpc).toBe(rpc);
+		await rpc.close();
 		const context = { locals: {} as Record<string, unknown> };
 		await (middleware.onRequest as Function)(context, async () => new Response());
 		expect(context.locals.rpcEndpoint).toBe("http://127.0.0.1:1234");
@@ -62,7 +66,8 @@ describe("defussRpc Astro integration", () => {
 	});
 
 	it("starts one server for concurrent first requests when none runs yet", async () => {
-		setRpcConfig({ api: { TestMathModule }, provider, host: "127.0.0.1", port: 0, compression: false });
+		const server = createRpcServer({ TestMathModule });
+		setRpcConfig({ rpc: server, provider, host: "127.0.0.1", port: 0, compression: false });
 		const contexts = [{ locals: {} as Record<string, unknown> }, { locals: {} as Record<string, unknown> }];
 		await Promise.all(contexts.map((context) => (onRequest as Function)(context, async () => new Response("ok"))));
 		const endpoint = contexts[0].locals.rpcEndpoint as string;
@@ -71,5 +76,6 @@ describe("defussRpc Astro integration", () => {
 		expect(getRpcServer()?.getUrl()).toBe(endpoint);
 		const rpc = await getRpcClient<{ TestMathModule: typeof TestMathModule }>({ baseUrl: endpoint });
 		expect(await rpc.TestMathModule.add(1, 2)).toBe(3);
+		await server.close();
 	});
 });

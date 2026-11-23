@@ -31,7 +31,7 @@ export interface RpcAnalysis {
 	diagnostics: RpcDiagnostic[];
 }
 
-/** The modules whose `createRpcServer` registers an API, and the integrations whose `api` option does. */
+/** The modules whose `createRpcServer` (or deprecated `registerGlobalRpcApi`) registers an API, and the integrations whose `api` option does. */
 const SERVER_MODULE = /^defuss-rpc(\/server(\.js)?)?$/;
 const INTEGRATION_MODULE = /^defuss-rpc-(vite|astro)$/;
 
@@ -56,7 +56,8 @@ export function usesDefussRpc(file: SourceFile): boolean {
 /**
  * Analyzes the given source files: every `createRpcServer(api)` and `defussRpc({ api })` call in them, the namespaces
  * the argument holds, and each exposed method's documentation. Files that import nothing from defuss-rpc are skipped.
- * Two registrations of the same namespace name keep the first, as the server does.
+ * Two registrations of the same namespace name keep the first: the schema documents namespaces by name, so servers
+ * that reuse a name in one project share the documentation of the first.
  *
  * @param project - a ts-morph project that holds the files and resolves their imports
  * @param files - the files to search for registrations
@@ -107,7 +108,7 @@ export function analyzeRpcApi(project: Project, files: readonly SourceFile[]): R
 		const callee = call.getExpression();
 		const arg = call.getArguments()[0];
 		if (!arg) return undefined;
-		if (importedFrom(callee, "createRpcServer", SERVER_MODULE)) return arg;
+		if (importedFrom(callee, "createRpcServer", SERVER_MODULE) || importedFrom(callee, "registerGlobalRpcApi", SERVER_MODULE)) return arg;
 		if (importedFrom(callee, "default", INTEGRATION_MODULE) || importedFrom(callee, "defussRpc", INTEGRATION_MODULE)) {
 			const options = resolveValue(arg);
 			if (!Node.isObjectLiteralExpression(options)) return undefined;

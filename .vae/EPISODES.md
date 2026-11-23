@@ -81,3 +81,13 @@ Wrap: EVERY lead becomes a test | .vae/VERIFY.py rule | one MEMORY line with BC,
 2026-11-02T05:24:59Z s=472a9d74 FINDING ARCH.md:60 L03 learn=none: one-off wording error caught in review; no rule kind checks cross-page consistency of prose
 2026-11-02T05:34:55Z s=472a9d74 DONE fp=d07b8bc74cf1 cov=90.8% paths=ARCH.md,README.md,docs/index.html,src/providers/bun.ts
 2026-11-02T05:34:55Z s=472a9d74 FINDING docs/index.html:282 A01 learn=none: human instruction about page content; no rule kind compares prose with output/bench
+2026-11-23T20:18:34Z s=472a9d74 FAIL lint,tests.e2e.1,tests.no-mocks
+2026-11-23T20:21:35Z s=472a9d74 FAIL lint,tests.e2e.1
+2026-11-23T20:32:28Z s=472a9d74 DONE fp=f2f814faf92c cov=92.3% paths=AGENTS.md,ARCH.md,CHANGELOG.md,README.md(+48)
+2026-11-23T20:32:28Z s=472a9d74 FINDING src/server.ts:close learn=none: no deterministic way found to make enqueue throw after cancel() removed the ender; defensive fix of the cleanup guarantee
+2026-11-23T20:32:28Z s=472a9d74 FINDING src/server.ts:isRpcRequest learn=test: src/instances.test.ts 'match only the RPC routes' asserts OPTIONS /rpc and GET /rpc are false
+2026-11-23T20:32:28Z s=472a9d74 FINDING src/global.test.ts:70 learn=verifier: .vae/VERIFY.py tests.no-mocks already encodes it
+2026-11-23T20:32:28Z s=472a9d74 FINDING scripts/e2e.mjs:interop learn=test: the e2e step itself fails when the program does not end with ok
+2026-11-23T20:32:28Z s=472a9d74 FINDING examples/files.ts#files T/width learn=verifier: scripts/docs.ts --check in make lint enforces the width
+2026-11-23T20:32:28Z s=472a9d74 FINDING README.md:528,746 B01 learn=verifier: the gate's prose check enforces it
+2026-11-23T20:32:28Z s=472a9d74 FINDING tmp/bench-compare run4-old, run5-old learn=memory: .vae/MEMORY.md line: run make bench in the foreground, since ending a turn starts the gate

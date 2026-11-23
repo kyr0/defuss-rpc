@@ -7,12 +7,21 @@
  * (`getRpcEndpoint()`), e.g. to call its own API from Node.js or Bun.
  */
 import { DEFAULT_PORT, type ExpressRpcServer, type ExpressRpcServerOptions, type RpcServerProvider } from "defuss-rpc/express-server";
-import type { ApiNamespace } from "defuss-rpc/server";
+import type { ApiNamespace, RpcServer } from "defuss-rpc/server";
 
 /** Options of the Vite plugin and the Astro integration. */
 export interface RpcPluginOptions {
-	/** Map of namespace name => class constructor or plain-object module to expose over RPC. */
-	api: ApiNamespace;
+	/**
+	 * The RPC server to run, from `createRpcServer()`; register its hooks and upload and download handlers on it.
+	 * The plugin starts a listener for it and stops the listener with Vite; the server itself stays open.
+	 */
+	rpc?: RpcServer;
+	/**
+	 * Map of namespace name => class constructor or plain-object module to expose over RPC.
+	 * @deprecated Pass `rpc: createRpcServer(api)`. With `api` the plugin registers it on the deprecated global server
+	 * (`registerGlobalRpcApi()`), whose module functions (`addHook()`, `addUploadHandler()`, …) then apply.
+	 */
+	api?: ApiNamespace;
 	/**
 	 * HTTP framework of the RPC server. Default on Bun: `Bun.serve` without a framework; on Node.js select one:
 	 * `expressProvider()` (`defuss-rpc/providers/express`). See `ExpressRpcServerOptions.provider`.

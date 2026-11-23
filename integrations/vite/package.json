@@ -1,6 +1,6 @@
 {
   "name": "defuss-rpc-vite",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "description": "Vite plugin for defuss-rpc: starts the RPC server beside vite dev (Bun.serve by default, port 63920) and gives the client its endpoint through virtual:defuss-rpc.",
   "type": "module",
   "license": "MIT",
@@ -67,7 +67,7 @@
     "prepublishOnly": "cd ../.. && make verify"
   },
   "peerDependencies": {
-    "defuss-rpc": "^3.0.0",
+    "defuss-rpc": "^4.0.0",
     "vite": ">=5.0.0"
   },
   "peerDependenciesMeta": {

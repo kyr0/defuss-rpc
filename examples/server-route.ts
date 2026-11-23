@@ -1,19 +1,22 @@
 /**
- * `rpcRoute` in your own `Bun.serve`: `bun examples/server-route.ts`. `rpcRoute` is a Fetch handler, so a server you
- * already run can mount it next to its other routes; the CORS headers below are the part ExpressRpcServer would add.
+ * An RPC server in your own `Bun.serve`: `bun examples/server-route.ts`. `rpc.fetch` is a Fetch handler, so a server
+ * you already run can mount it next to its other routes; the CORS headers below are part of what ExpressRpcServer
+ * would add.
  * PORT picks the port (default 63920, 0 = any). VERIFIED: scripts/e2e.mjs runs this file from the packed package on
  * Bun, and both clients and the website use it.
  */
 // #region server-route
-import { createRpcServer, rpcRoute } from "defuss-rpc/server";
+import { createRpcServer } from "defuss-rpc/server";
 import RpcApi from "./api.ts";
-import "./files.ts";
-import "./hooks.ts";
+import { addFileHandlers } from "./files.ts";
+import { addUploadLimit } from "./hooks.ts";
 
-createRpcServer(RpcApi);
+const rpc = createRpcServer(RpcApi);
+addFileHandlers(rpc);
+addUploadLimit(rpc);
 
-// rpcRoute answers requests; CORS for browser pages on other
-// origins is the server's job.
+// rpc.fetch answers RPC requests; CORS for browser pages on other
+// origins is the host's job.
 const cors = {
 	"Access-Control-Allow-Origin": "*",
 	"Access-Control-Expose-Headers":
@@ -35,7 +38,10 @@ const server = Bun.serve({
 				headers: { ...cors, "Access-Control-Allow-Headers": allowHeaders },
 			});
 		}
-		const response = await rpcRoute({ request });
+		if (!rpc.matches(request)) {
+			return new Response("Not Found", { status: 404 });
+		}
+		const response = await rpc.fetch(request);
 		for (const [name, value] of Object.entries(cors)) {
 			response.headers.set(name, value);
 		}
@@ -45,4 +51,4 @@ const server = Bun.serve({
 // #endregion server-route
 
 console.info(`${new Date().toISOString()} INFO defuss-rpc rpc server listening url=${server.url.origin}`);
-process.once("SIGTERM", () => void server.stop().then(() => process.exit(0)));
+process.once("SIGTERM", () => void server.stop().then(() => rpc.close()).then(() => process.exit(0)));

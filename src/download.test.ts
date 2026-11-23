@@ -1,29 +1,23 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-	addDownloadHandler,
-	addHook,
-	addStreamingDownloadHandler,
-	clearRpcServer,
-	rpcRoute,
-	type DownloadMeta,
-} from "./server.js";
+import { createRpcServer, type DownloadMeta, type RpcServer } from "./server.js";
 import { download, downloadAsBlob, parseContentDisposition } from "./client.js";
 import { testBytes } from "./test/api.js";
 import type { RpcServerProvider } from "./provider.js";
-import { PROVIDERS, serveRegistry, sha256 } from "./test/server.js";
+import { PROVIDERS, sha256, startServer } from "./test/server.js";
 
 const FILE = testBytes(70_000, 3);
 let lastMeta: DownloadMeta | undefined;
-let server: Awaited<ReturnType<typeof serveRegistry>>;
+let rpc: RpcServer;
+let server: Awaited<ReturnType<typeof startServer>>;
 
 const get = (query: string, headers: Record<string, string> = {}) =>
-	rpcRoute({ request: new Request(`http://localhost/rpc/download?${query}`, { headers }) });
+	rpc.fetch(new Request(`http://localhost/rpc/download?${query}`, { headers }));
 
 describe("downloads", () => {
 	beforeAll(async () => {
-		await clearRpcServer();
-		addDownloadHandler("raw", () => FILE);
-		addDownloadHandler("report", async (meta) => {
+		rpc = createRpcServer({});
+		rpc.addDownloadHandler("raw", () => FILE);
+		rpc.addDownloadHandler("report", async (meta) => {
 			lastMeta = meta;
 			return {
 				data: FILE,
@@ -36,20 +30,18 @@ describe("downloads", () => {
 				},
 			};
 		});
-		addStreamingDownloadHandler("stream", () => ({
+		rpc.addStreamingDownloadHandler("stream", () => ({
 			stream: new Blob([FILE]).stream(),
 			fileMeta: { size: FILE.byteLength, contentType: "application/octet-stream", filename: "data.bin" },
 		}));
-		addDownloadHandler("broken", () => {
+		rpc.addDownloadHandler("broken", () => {
 			throw new Error("disk on fire");
 		});
-		addHook({ phase: "guard", fn: (ns, _m, _args, request) => ns !== "__download__" || request.headers.get("authorization") !== "Bearer bad" });
+		rpc.addHook({ phase: "guard", fn: (ns, _m, _args, request) => ns !== "__download__" || request.headers.get("authorization") !== "Bearer bad" });
 	});
-	afterAll(async () => {
-		await clearRpcServer();
-	});
+	afterAll(() => rpc.close());
 
-	describe("rpcRoute", () => {
+	describe("rpc.fetch", () => {
 		it("sends a raw Uint8Array as application/octet-stream", async () => {
 			const response = await get("handler=raw&downloadId=d1");
 			expect(response.status).toBe(200);
@@ -82,7 +74,7 @@ describe("downloads", () => {
 
 	describe.for(PROVIDERS)("client over ExpressRpcServer on $name", (provider: RpcServerProvider<unknown>) => {
 		beforeAll(async () => {
-			server = await serveRegistry(provider);
+			server = await startServer(provider, rpc);
 		});
 		afterAll(async () => {
 			await server.stop();

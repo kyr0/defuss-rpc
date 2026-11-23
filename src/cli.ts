@@ -15,9 +15,10 @@ import type { RpcApiSchema } from "./types.d.js";
 
 const USAGE = `Usage: defuss-rpc schema <files | globs ...> [options]
 
-Reads every createRpcServer(...) call (and the api option of defuss-rpc-vite / defuss-rpc-astro) in the given
-files, follows the registered API to its classes and objects, and prints the schema /rpc/schema serves, with
-each method's JSDoc, parameters, return type and JSON Schema. Files that import nothing from defuss-rpc are skipped.
+Reads every createRpcServer(...) call (and the deprecated registerGlobalRpcApi(...) and api option of
+defuss-rpc-vite / defuss-rpc-astro) in the given files, follows the registered API to its classes and objects,
+and prints the schema /rpc/schema serves, with each method's JSDoc, parameters, return type and JSON Schema.
+Files that import nothing from defuss-rpc are skipped.
 
 Options:
   --project <tsconfig.json>  the TypeScript project (default: the nearest tsconfig.json)

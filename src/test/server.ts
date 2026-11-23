@@ -1,13 +1,10 @@
-/** Node.js test helpers: real servers on ephemeral ports and direct `rpcRoute` calls. */
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+/** Node.js test helpers: real servers on ephemeral ports and direct `rpc.fetch` calls. */
 import { DSON } from "defuss-dson";
 import { ExpressRpcServer, type ExpressRpcServerOptions } from "../express-server.js";
 import type { RpcServerProvider } from "../provider.js";
 import { expressProvider } from "../providers/express.js";
-import { clearRpcServer, createRpcServer, rpcRoute, setUploadDir } from "../server.js";
-import type { ApiNamespace } from "../types.d.js";
+import { createRpcServer } from "../server.js";
+import type { ApiNamespace, RpcServer } from "../types.d.js";
 
 const onBun = Boolean(process.versions.bun);
 
@@ -20,39 +17,34 @@ export const PROVIDERS: RpcServerProvider<unknown>[] = [
 	...(onBun ? [(await import("../providers/bunway.js")).bunwayProvider(), (await import("../providers/bun.js")).bunServeProvider()] : []),
 ] as RpcServerProvider<unknown>[];
 
-/** Points uploads at a fresh temp directory, so test files never share temp files. */
-export async function isolateUploads(): Promise<string> {
-	const dir = await mkdtemp(join(tmpdir(), "defuss-rpc-test-"));
-	setUploadDir(dir);
-	return dir;
-}
-
-/** Registers `api` on an empty server and starts an `ExpressRpcServer` on `provider` and a free port. */
+/**
+ * Starts an `ExpressRpcServer` on `provider` and a free port for `rpc`, or for a new server of `api`. `stop()` stops
+ * the listener, and closes the RPC server when this function created it.
+ */
 export async function startServer(
 	provider: RpcServerProvider<unknown>,
-	api: ApiNamespace,
-	options: Omit<ExpressRpcServerOptions, "provider"> = {},
+	api: ApiNamespace | RpcServer,
+	options: Omit<ExpressRpcServerOptions, "provider" | "rpc"> = {},
 ) {
-	await clearRpcServer();
-	createRpcServer(api);
-	return serveRegistry(provider, options);
-}
-
-/** Starts an `ExpressRpcServer` on `provider` for what is registered now (namespaces, handlers, hooks). */
-export async function serveRegistry(provider: RpcServerProvider<unknown>, options: Omit<ExpressRpcServerOptions, "provider"> = {}) {
-	const server = new ExpressRpcServer({ port: 0, ...options, provider });
+	const given = typeof (api as RpcServer).fetch === "function";
+	const rpc = given ? (api as RpcServer) : createRpcServer(api as ApiNamespace);
+	const server = new ExpressRpcServer({ port: 0, ...options, provider, rpc });
 	const { url, port } = await server.start();
-	return { server, url, port, stop: () => server.stop() };
+	const stop = async () => {
+		await server.stop();
+		if (!given) await rpc.close();
+	};
+	return { rpc, server, url, port, stop };
 }
 
-/** Sends one RPC call straight to `rpcRoute` (no HTTP server). */
-export function callRoute(className: string, methodName: string, args: unknown[] = [], path = "/rpc", body?: string) {
+/** Sends one RPC call straight to `rpc.fetch` (no HTTP server). */
+export function callRoute(rpc: RpcServer, className: string, methodName: string, args: unknown[] = [], path = "/rpc", body?: string) {
 	const request = new Request(`http://localhost${path}`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: body ?? DSON.stringify({ className, methodName, args }),
 	});
-	return rpcRoute({ request });
+	return rpc.fetch(request);
 }
 
 /** Parses an NDJSON body into DSON frames. */

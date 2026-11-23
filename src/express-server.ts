@@ -1,6 +1,6 @@
 /**
- * `ExpressRpcServer`: a standalone HTTP server for `rpcRoute`, on `Bun.serve` by default or on a framework that the
- * caller selects with a provider (`defuss-rpc/providers/*`).
+ * `ExpressRpcServer`: a standalone HTTP listener for one RPC server (`createRpcServer()`), on `Bun.serve` by default or
+ * on a framework that the caller selects with a provider (`defuss-rpc/providers/*`).
  *
  * Why an adapter around the Fetch handler instead of framework-native routes: the RPC logic stays in one
  * runtime-neutral function, and the server adds what a standalone deployment needs: CORS, a health route, a body
@@ -12,6 +12,8 @@
  */
 import { log } from "./log.js";
 import { createRpcHttpCore, parseByteSize } from "./http-core.js";
+import { rpcRoute } from "./server.js";
+import type { RpcServer } from "./types.d.js";
 import type { RpcListener, RpcServerProvider } from "./provider.js";
 import { bunServeProvider, type BunServeApp } from "./providers/bun.js";
 
@@ -35,6 +37,14 @@ export type { BunServeApp } from "./providers/bun.js";
 export const DEFAULT_PORT = 63920;
 
 export interface ExpressRpcServerOptions<App = BunServeApp> {
+	/**
+	 * The RPC server to serve, from `createRpcServer()`. The listener only forwards to `rpc.fetch`: `stop()` leaves
+	 * `rpc` open, so one RPC server may outlive its listener or be served by several; close it with `rpc.close()`.
+	 *
+	 * Without it the listener serves the deprecated global server (`registerGlobalRpcApi()`, `addHook()`, …), as
+	 * before 4.0.
+	 */
+	rpc?: RpcServer;
 	/**
 	 * The HTTP framework. Default on Bun: `Bun.serve` without a framework, the fastest option (README.md, section
 	 * Benchmark); `getApp().fetch` answers requests outside the RPC routes. Elsewhere, import one:
@@ -98,7 +108,7 @@ const MISSING_PROVIDER =
 const onBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
 
 /**
- * HTTP server for `rpcRoute` on the framework of its provider.
+ * HTTP listener for one RPC server on the framework of its provider.
  *
  * Routes (under `basePath`): `GET|POST /health`, `ANY /rpc`, `ANY /rpc/schema`, `POST /rpc/upload`,
  * `HEAD /rpc/upload/:uploadId`, `GET /rpc/upload/progress/:uploadId` and `GET /rpc/download`. CORS headers are added
@@ -126,7 +136,9 @@ export class ExpressRpcServer<App = BunServeApp> {
 		this.host = options.host || "localhost";
 		this.basePath = (options.basePath || "").replace(/\/+$/, "");
 		const comp = options.compression ?? true;
+		const rpc = options.rpc;
 		const core = createRpcHttpCore({
+			fetch: rpc ? rpc.fetch : (request) => rpcRoute({ request }),
 			basePath: this.basePath,
 			jsonSizeLimit: parseByteSize(options.jsonSizeLimit ?? "1mb"),
 			corsOrigin: options.corsOrigin ?? "*",
@@ -150,7 +162,7 @@ export class ExpressRpcServer<App = BunServeApp> {
 		return { port: this.port, url };
 	}
 
-	/** Stops listening and closes open connections, including running streams. */
+	/** Stops listening and closes open connections, including running streams; the RPC server itself stays open. */
 	async stop(): Promise<void> {
 		if (!this.listener) return;
 		const listener = this.listener;
@@ -176,15 +188,15 @@ export class ExpressRpcServer<App = BunServeApp> {
 }
 
 /**
- * Creates and starts an {@link ExpressRpcServer}; register your API with `createRpcServer()` first.
+ * Creates and starts an {@link ExpressRpcServer}.
  *
  * @example
  * ```ts
  * import { createRpcServer } from "defuss-rpc/server";
  * import { createExpressRpcServer } from "defuss-rpc/express-server";
  *
- * createRpcServer({ UserApi });
- * const { server, url } = await createExpressRpcServer(); // Bun.serve on port 63920
+ * const rpc = createRpcServer({ UserApi });
+ * const { server, url } = await createExpressRpcServer({ rpc }); // Bun.serve on port 63920
  * ```
  *
  * @returns `{ server, port, url }`

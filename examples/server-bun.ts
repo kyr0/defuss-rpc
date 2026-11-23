@@ -8,14 +8,17 @@
 import { createRpcServer } from "defuss-rpc/server";
 import { ExpressRpcServer } from "defuss-rpc/express-server";
 import RpcApi from "./api.ts";
-import "./files.ts";
-import "./hooks.ts";
+import { addFileHandlers } from "./files.ts";
+import { addUploadLimit } from "./hooks.ts";
 
-createRpcServer(RpcApi);
+const rpc = createRpcServer(RpcApi);
+addFileHandlers(rpc);
+addUploadLimit(rpc);
 
 // No provider: Bun.serve, without a framework. On Node.js, select
 // one (server-express.ts).
 const server = new ExpressRpcServer({
+	rpc,
 	host: "127.0.0.1",
 	// undefined: the default port, 63920
 	port: process.env.PORT ? Number(process.env.PORT) : undefined,
@@ -29,4 +32,4 @@ server.getApp().fetch = (request) =>
 await server.start(); // listening at http://127.0.0.1:63920
 // #endregion server-bun
 
-process.once("SIGTERM", () => void server.stop().then(() => process.exit(0)));
+process.once("SIGTERM", () => void server.stop().then(() => rpc.close()).then(() => process.exit(0)));

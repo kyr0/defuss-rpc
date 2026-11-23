@@ -8,12 +8,15 @@ import { createRpcServer } from "defuss-rpc/server";
 import { ExpressRpcServer } from "defuss-rpc/express-server";
 import { bunwayProvider } from "defuss-rpc/providers/bunway";
 import RpcApi from "./api.ts";
-import "./files.ts";
-import "./hooks.ts";
+import { addFileHandlers } from "./files.ts";
+import { addUploadLimit } from "./hooks.ts";
 
-createRpcServer(RpcApi);
+const rpc = createRpcServer(RpcApi);
+addFileHandlers(rpc);
+addUploadLimit(rpc);
 
 const server = new ExpressRpcServer({
+	rpc,
 	provider: bunwayProvider(), // bunway on Bun.serve: Bun only
 	host: "127.0.0.1",
 	port: Number(process.env.PORT ?? 63920),
@@ -21,4 +24,4 @@ const server = new ExpressRpcServer({
 await server.start(); // listening at http://127.0.0.1:63920
 // #endregion server-bunway
 
-process.once("SIGTERM", () => void server.stop().then(() => process.exit(0)));
+process.once("SIGTERM", () => void server.stop().then(() => rpc.close()).then(() => process.exit(0)));

@@ -1,15 +1,12 @@
 import { readdir } from "node:fs/promises";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import {
-	addHook,
-	addStreamingUploadHandler,
-	addUploadHandler,
-	clearRpcServer,
-	getUploadDir,
-	rpcRoute,
-} from "./server.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createRpcServer } from "./server.js";
+import type { RpcServer } from "./types.d.js";
 import { testBytes } from "./test/api.js";
-import { frames, isolateUploads, sha256 } from "./test/server.js";
+import { frames, sha256 } from "./test/server.js";
+
+/** The server under test, new for every test. */
+let rpc: RpcServer;
 
 interface PostOptions {
 	handler?: string;
@@ -37,11 +34,11 @@ function post(body: BodyInit | ReadableStream<Uint8Array> | null, options: PostO
 		// @ts-expect-error undici needs duplex for a streamed body
 		duplex: "half",
 	});
-	return rpcRoute({ request });
+	return rpc.fetch(request);
 }
 
 const head = (uploadId: string) =>
-	rpcRoute({ request: new Request(`http://localhost/rpc/upload/${uploadId}`, { method: "HEAD" }) });
+	rpc.fetch(new Request(`http://localhost/rpc/upload/${uploadId}`, { method: "HEAD" }));
 
 async function compress(data: Uint8Array, format: "gzip" | "deflate") {
 	const stream = new Blob([data as Uint8Array<ArrayBuffer>]).stream().pipeThrough(new CompressionStream(format));
@@ -85,15 +82,15 @@ async function readEvents(response: Response): Promise<any[]> {
 
 let received: { data?: Uint8Array; meta?: any; chunks?: number[] } = {};
 
-describe("uploads via rpcRoute", () => {
-	beforeAll(isolateUploads);
+describe("uploads via rpc.fetch", () => {
 	beforeEach(() => {
 		received = {};
-		addUploadHandler("buffered", (data, meta) => {
+		rpc = createRpcServer({});
+		rpc.addUploadHandler("buffered", (data, meta) => {
 			received = { data, meta };
 			return { size: data.byteLength, name: meta.originalFilename };
 		});
-		addStreamingUploadHandler("streaming", async (stream, meta) => {
+		rpc.addStreamingUploadHandler("streaming", async (stream, meta) => {
 			const chunks: number[] = [];
 			const parts: Uint8Array[] = [];
 			for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) {
@@ -103,11 +100,11 @@ describe("uploads via rpcRoute", () => {
 			received = { chunks, meta, data: new Uint8Array(await new Blob(parts as Uint8Array<ArrayBuffer>[]).arrayBuffer()) };
 			return { chunks: chunks.length };
 		});
-		addUploadHandler("failing", () => {
+		rpc.addUploadHandler("failing", () => {
 			throw new Error("Intentional handler error");
 		});
 	});
-	afterEach(() => clearRpcServer());
+	afterEach(() => rpc.close());
 
 	it("hands a buffered handler the bytes and answers received + result frames with SHA-256", async () => {
 		const data = testBytes(300_000);
@@ -119,7 +116,7 @@ describe("uploads via rpcRoute", () => {
 		expect(received.data).toEqual(data);
 		expect(received.meta).toMatchObject({ handlerName: "buffered", originalSize: 300_000, offset: 0, contentEncoding: "identity" });
 		// A successful upload leaves no temp file behind.
-		expect(await readdir(getUploadDir())).toEqual([]);
+		expect(await readdir(rpc.uploadDir)).toEqual([]);
 	});
 
 	it("streams the stored upload to a streaming handler in bounded chunks", async () => {
@@ -148,7 +145,7 @@ describe("uploads via rpcRoute", () => {
 	it("answers 404 for an unknown handler and 403 when a guard rejects", async () => {
 		expect((await post(new Uint8Array(1), { handler: "nope" })).status).toBe(404);
 		const seen: unknown[] = [];
-		addHook({ phase: "guard", fn: (ns, method, args) => (seen.push([ns, method, args]), false) });
+		rpc.addHook({ phase: "guard", fn: (ns, method, args) => (seen.push([ns, method, args]), false) });
 		expect((await post(new Uint8Array(3), { originalSize: 3 })).status).toBe(403);
 		expect(seen).toEqual([["__upload__", "buffered", [3]]]);
 	});
@@ -166,7 +163,7 @@ describe("uploads via rpcRoute", () => {
 
 	it("runs result hooks after a successful and after a failed handler", async () => {
 		const results: unknown[] = [];
-		addHook({ phase: "result", fn: (ns, method, _args, _request, result) => void results.push([ns, method, result]) });
+		rpc.addHook({ phase: "result", fn: (ns, method, _args, _request, result) => void results.push([ns, method, result]) });
 		await (await post(testBytes(4), { originalSize: 4 })).text();
 		await (await post(testBytes(4), { handler: "failing", originalSize: 4 })).text();
 		expect(results).toEqual([
@@ -210,7 +207,7 @@ describe("uploads via rpcRoute", () => {
 	});
 
 	it("streams progress over SSE to a client that subscribed before the POST", async () => {
-		const progress = rpcRoute({ request: new Request("http://localhost/rpc/upload/progress/u-sse") });
+		const progress = rpc.fetch(new Request("http://localhost/rpc/upload/progress/u-sse"));
 		const data = testBytes(2 * 1024 * 1024);
 		const [events, upload] = await Promise.all([
 			progress.then(readEvents),
@@ -225,7 +222,7 @@ describe("uploads via rpcRoute", () => {
 
 	it("rejects invalid handler names at registration", () => {
 		for (const name of ["", "a b", "x/y", "z".repeat(129)]) {
-			expect(() => addUploadHandler(name, () => null)).toThrow(/Invalid upload handler name/);
+			expect(() => rpc.addUploadHandler(name, () => null)).toThrow(/Invalid upload handler name/);
 		}
 	});
 });

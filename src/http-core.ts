@@ -1,6 +1,6 @@
 /**
  * The HTTP layer of `ExpressRpcServer` in Fetch API terms: CORS, preflights, `/health`, the call body limit, gzip and
- * the hand-over to {@link rpcRoute}. Providers connect it to their framework: `node:http` frameworks through
+ * the hand-over to the RPC server's `fetch`. Providers connect it to their framework: `node:http` frameworks through
  * `nodeMiddleware()` (`node-bridge.ts`), Fetch frameworks such as bunway by passing their `Request` directly.
  *
  * Why Fetch terms and not `node:http`: bunway (on `Bun.serve`) has no `node:http` request or response, while every
@@ -12,12 +12,13 @@
  * @internal
  */
 import { createGzip, gzipSync, constants as zlibConstants } from "node:zlib";
-import { rpcRoute } from "./server.js";
 import { errorMessage, log } from "./log.js";
 import type { RpcHttpCore } from "./provider.js";
 
 /** Settings of the core, resolved from `ExpressRpcServerOptions` once at construction. */
 export interface RpcHttpCoreOptions {
+	/** The RPC server's handler, which answers what the core forwards. */
+	fetch: (request: Request) => Promise<Response>;
 	basePath: string;
 	/** Maximum call body after decompression, in bytes. */
 	jsonSizeLimit: number;
@@ -133,7 +134,7 @@ function gzipFrames(source: ReadableStream<Uint8Array>, level: number): Readable
 	});
 }
 
-/** True for the routes {@link rpcRoute} serves, relative to `basePath`. */
+/** True for the routes the RPC server answers, relative to `basePath`. */
 function isRpcRoute(method: string, rest: string): boolean {
 	if (rest === "/rpc" || rest === "/rpc/schema") return true;
 	if (method === "POST") return rest === "/rpc/upload";
@@ -152,7 +153,7 @@ function jsonResponse(status: number, body: unknown, headers: Headers): Response
 
 /** Creates the core for one server; `ExpressRpcServer` hands it to its provider. */
 export function createRpcHttpCore(options: RpcHttpCoreOptions): RpcHttpCore {
-	const { basePath, jsonSizeLimit, corsOrigin, compression } = options;
+	const { fetch, basePath, jsonSizeLimit, corsOrigin, compression } = options;
 
 	const corsHeaders = (origin: string | null | undefined, requestedHeaders?: string | null): [string, string][] => {
 		const headers: [string, string][] = [];
@@ -175,7 +176,7 @@ export function createRpcHttpCore(options: RpcHttpCoreOptions): RpcHttpCore {
 		return (rest === "/health" && (method === "GET" || method === "POST")) || isRpcRoute(method, rest);
 	};
 
-	/** The request rpcRoute sees: uploads as they are, calls with their body read (or dropped), see `handle`. */
+	/** The request the RPC server sees: uploads as they are, calls with their body read (or dropped), see `handle`. */
 	const forward = async (request: Request, rest: string): Promise<Request> => {
 		if (request.method === "POST" && rest === "/rpc/upload") return request;
 		const headers = new Headers(request.headers);
@@ -184,7 +185,7 @@ export function createRpcHttpCore(options: RpcHttpCoreOptions): RpcHttpCore {
 		if (request.method !== "GET" && request.method !== "HEAD" && type === "application/json") {
 			body = (await readText(request, jsonSizeLimit)) || undefined;
 		}
-		// The body was inflated here (or dropped), so its original encoding and length must not reach rpcRoute.
+		// The body was inflated here (or dropped), so its original encoding and length must not reach the RPC server.
 		headers.delete("content-encoding");
 		headers.delete("content-length");
 		return new Request(request.url, { method: request.method, headers, body });
@@ -216,7 +217,7 @@ export function createRpcHttpCore(options: RpcHttpCoreOptions): RpcHttpCore {
 	/**
 	 * Answers a request that {@link match} accepted.
 	 *
-	 * Calls run only with `Content-Type: application/json`; other bodies are dropped and rpcRoute answers 400. Why:
+	 * Calls run only with `Content-Type: application/json`; other bodies are dropped and the RPC server answers 400. Why:
 	 * a cross-origin page can send `text/plain` or form bodies without a CORS preflight, so a call the server runs
 	 * must carry a content type that requires one.
 	 */
@@ -227,7 +228,7 @@ export function createRpcHttpCore(options: RpcHttpCoreOptions): RpcHttpCore {
 		const rest = url.pathname.replace(/(.)\/+$/, "$1").slice(basePath.length);
 		if (rest === "/health") return jsonResponse(200, { status: "ok", timestamp: new Date().toISOString() }, headers);
 		try {
-			const response = await rpcRoute({ request: await forward(request, rest) });
+			const response = await fetch(await forward(request, rest));
 			for (const [key, value] of response.headers) {
 				if (key !== "content-length" || !response.headers.get("content-type")?.startsWith("application/json")) headers.append(key, value);
 			}

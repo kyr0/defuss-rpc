@@ -8,7 +8,7 @@
  * - upload: 1 MiB to a streaming upload handler (written to a temp file, hashed, read back).
  * - download: 8 MiB from memory.
  * The servers: ExpressRpcServer without a provider (Bun.serve), on Express (Node.js and Bun) and on bunway (Bun),
- * and `rpcRoute` in a bare `Bun.serve`, the baseline for what a provider and the HTTP layer cost. Compression is off on
+ * and `rpc.fetch` in a bare `Bun.serve`, the baseline for what a provider and the HTTP layer cost. Compression is off on
  * both sides, so the numbers measure transport, not zlib.
  *
  * Memory: the server process's resident set size (RSS, from `ps`), once idle after start and every 100 ms under load;
@@ -44,7 +44,7 @@ const SERVERS = [
 	["express", "bun", "express"],
 	["bunway", "bun", "bunway"],
 	["no provider (Bun.serve)", "bun", "default"],
-	["bare rpcRoute in Bun.serve", "bun", "bun.serve"],
+	["bare rpc.fetch in Bun.serve", "bun", "bun.serve"],
 ].map(([provider, runtime, env]) => ({ label: `${provider} on ${runtime === "bun" ? "Bun" : "Node.js"}`, provider, runtime, env }));
 
 const call = (methodName, args) => ({

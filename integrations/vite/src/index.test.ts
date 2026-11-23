@@ -7,7 +7,7 @@ import { createServer, type ViteDevServer } from "vite";
 import { getRpcClient, uploadComplete } from "defuss-rpc/client";
 import type { RpcServerProvider } from "defuss-rpc/express-server";
 import { expressProvider } from "defuss-rpc/providers/express";
-import { addUploadHandler, clearRpcServer, setUploadDir } from "defuss-rpc/server";
+import { addUploadHandler, clearRpcServer, createRpcServer, type RpcServer } from "defuss-rpc/server";
 import { defussRpc } from "./index.js";
 import { buildEndpoint, getRpcEndpoint, getRpcServer, setRpcEndpoint } from "./rpc-state.js";
 
@@ -23,12 +23,14 @@ const PROVIDERS: { name: string; provider?: RpcServerProvider<unknown> }[] = [
 	...(process.versions.bun ? [{ name: "Bun.serve (no provider)", provider: undefined }] : []),
 ];
 
-/** Points uploads at a fresh temp directory, so test runs never share temp files. */
-async function isolateUploads() {
-	setUploadDir(await mkdtemp(join(tmpdir(), "defuss-rpc-vite-test-")));
-}
-
 let vite: ViteDevServer | undefined;
+/** The RPC servers the tests created; `afterEach` closes them. */
+const servers: RpcServer[] = [];
+function rpcServer() {
+	const rpc = createRpcServer({ TestMathModule });
+	servers.push(rpc);
+	return rpc;
+}
 
 async function startVite(options: Partial<Parameters<typeof defussRpc>[0]> = {}) {
 	const root = await mkdtemp(join(tmpdir(), "defuss-rpc-vite-"));
@@ -39,7 +41,7 @@ async function startVite(options: Partial<Parameters<typeof defussRpc>[0]> = {})
 		configFile: false,
 		logLevel: "silent",
 		server: { port: 0, host: "127.0.0.1" },
-		plugins: [defussRpc({ api: { TestMathModule }, provider: PROVIDERS[0].provider, host: "127.0.0.1", port: 0, ...options })],
+		plugins: [defussRpc({ rpc: rpcServer(), provider: PROVIDERS[0].provider, host: "127.0.0.1", port: 0, ...options })],
 	});
 	await vite.listen();
 	return root;
@@ -70,6 +72,7 @@ describe("defussRpc Vite plugin", () => {
 		await vite?.close();
 		vite = undefined;
 		setRpcEndpoint("");
+		await Promise.all(servers.splice(0).map((rpc) => rpc.close()));
 		await clearRpcServer();
 	});
 
@@ -102,10 +105,10 @@ describe("defussRpc Vite plugin", () => {
 		expect(await virtualModuleCode(vite!)).toContain('export const rpcEndpoint = "https://api.example.com";');
 	});
 
-	it("keeps upload handlers when an API file changes, and stops the RPC server with Vite", async () => {
-		await isolateUploads();
-		const root = await startVite({ watch: ["src/api/**/*.ts"] });
-		addUploadHandler("survives", (data) => data.byteLength);
+	it("keeps upload handlers when an API file changes, and stops the listener with Vite", async () => {
+		const rpc = rpcServer();
+		const root = await startVite({ rpc, watch: ["src/api/**/*.ts"] });
+		rpc.addUploadHandler("survives", (data) => data.byteLength);
 		const endpoint = getRpcEndpoint();
 		const file = join(root, "src/api/math.ts");
 		await writeFile(file, "export const x = 2;\n");
@@ -116,6 +119,18 @@ describe("defussRpc Vite plugin", () => {
 		await vite!.close();
 		vite = undefined;
 		await expect(call(endpoint)).rejects.toThrow();
+		expect((await rpc.fetch(new Request("http://localhost/rpc/schema"))).status, "the RPC server outlives the listener").toBe(200);
+	});
+
+	it("serves the deprecated api option from the global server and its module functions", async () => {
+		await startVite({ rpc: undefined, api: { TestMathModule } });
+		addUploadHandler("legacy", (data) => data.byteLength);
+		expect(await call(getRpcEndpoint())).toBe(42);
+		expect((await uploadComplete("legacy", new Uint8Array(3), { baseUrl: getRpcEndpoint() })).result).toBe(3);
+	});
+
+	it("throws without an RPC server", () => {
+		expect(() => defussRpc({})).toThrow(/rpc: createRpcServer\(api\)/);
 	});
 
 	it("in vite build the virtual module reads endpoint, else VITE_DEFUSS_RPC_URL", async () => {
@@ -123,7 +138,7 @@ describe("defussRpc Vite plugin", () => {
 			[{}, 'export const rpcEndpoint = import.meta.env.VITE_DEFUSS_RPC_URL || "";'],
 			[{ endpoint: "https://rpc.example.com" }, 'export const rpcEndpoint = "https://rpc.example.com";'],
 		] as const) {
-			const plugin = defussRpc({ api: {}, provider: PROVIDERS[0].provider, ...options });
+			const plugin = defussRpc({ rpc: rpcServer(), provider: PROVIDERS[0].provider, ...options });
 			const config = (plugin.config as Function)({}, { command: "build", mode: "production" });
 			expect(config).toEqual({ optimizeDeps: { exclude: ["defuss-rpc"] } });
 			expect((plugin.resolveId as Function)("virtual:defuss-rpc")).toBe("\0virtual:defuss-rpc");

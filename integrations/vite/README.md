@@ -19,6 +19,7 @@ bun add express
 ```ts
 import { defineConfig } from "vite";
 import { defussRpc } from "defuss-rpc-vite";
+import { createRpcServer } from "defuss-rpc/server";
 import RpcApi from "./api.ts";
 
 // No provider: the RPC server runs on Bun.serve, port 63920.
@@ -26,7 +27,7 @@ import RpcApi from "./api.ts";
 export default defineConfig({
   plugins: [
     defussRpc({
-      api: RpcApi,
+      rpc: createRpcServer(RpcApi),
       host: "127.0.0.1",
       watch: ["api.ts"],
     }),
@@ -68,7 +69,8 @@ declare module "virtual:defuss-rpc" {
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `api` | required | namespace object, as for `createRpcServer()` |
+| `rpc` | required | the RPC server to run, from `createRpcServer()`; register hooks and upload and download handlers on it |
+| `api` | | deprecated: a namespace object, registered on defuss-rpc's global server (`registerGlobalRpcApi()`) in place of `rpc` |
 | `provider` | `Bun.serve` (Bun only) | the server framework; on Node.js `expressProvider()` from `defuss-rpc/providers/express` |
 | `port` | `63920` | RPC server port; `0` picks a free one, for two dev servers at once |
 | `host` | `"localhost"` | bind address; `"0.0.0.0"` for Docker or LAN |
@@ -81,7 +83,7 @@ declare module "virtual:defuss-rpc" {
 | `endpoint` | dev server URL | the URL the browser uses; in `vite build` else `VITE_DEFUSS_RPC_URL`, else `""` |
 
 What happens when:
-- `vite dev` registers `api`, starts the server and stops it with Vite. A restart after a change to `vite.config.ts` or a file it imports registers the API again and starts a new server on the same port.
+- `vite dev` starts a listener for `rpc` and stops it with Vite; `rpc` itself stays open. A restart after a change to `vite.config.ts` or a file it imports runs the new config's `rpc` on a new listener on the same port.
 - `vite build` starts nothing; `virtual:defuss-rpc` then holds `endpoint`, else `import.meta.env.VITE_DEFUSS_RPC_URL`, else `""` (the page's own origin).
 - A change to a file matching `watch` reloads the page.
 

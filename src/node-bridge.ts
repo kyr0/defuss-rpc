@@ -127,7 +127,7 @@ export function nodeMiddleware(rpc: RpcHttpCore): RpcMiddleware {
 		rpc
 			.handle(request)
 			.then((response) => {
-				// rpcRoute reads an upload body before it answers, so what is unread now is never read.
+				// The RPC server reads an upload body before it answers, so what is unread now is never read.
 				if (hasBody) discardRest(req);
 				return writeResponse(response, res, rpc.isStream(response));
 			})

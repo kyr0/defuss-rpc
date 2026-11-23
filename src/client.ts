@@ -55,7 +55,7 @@ export interface RpcClientOptions {
  * Fetches the API schema from `{baseUrl}/rpc/schema`. {@link getRpcClient} calls it once per endpoint and caches
  * the result; call this directly only to inspect the API.
  *
- * Uses `POST` because `rpcRoute` answers the schema on any method and some hosts strip or cache `GET` requests.
+ * Uses `POST` because the server answers the schema on any method and some hosts strip or cache `GET` requests.
  *
  * @param baseUrl - Endpoint base URL; defaults to the registered endpoint, else the page's origin.
  * @returns The `RpcApiSchema` array: one descriptor per namespace.
@@ -515,7 +515,7 @@ function sanitizeUploadId(value: string): string {
  * and sends only the rest; the server hashes the whole file.
  *
  * @typeParam T - The return type of the server-side upload handler.
- * @param handlerName - The name passed to `addUploadHandler()` on the server.
+ * @param handlerName - The name passed to `rpc.addUploadHandler()` on the server.
  * @param data        - Binary payload (Uint8Array, ArrayBuffer, Blob, or any ArrayBufferView).
  * @param options     - Upload options (baseUrl, compression, resume, abort, etc.).
  *
@@ -787,7 +787,7 @@ export async function* upload<T = unknown>(
  * the SSE connection.
  *
  * @typeParam T - The return type of the server-side upload handler.
- * @param handlerName - The name passed to `addUploadHandler()` on the server.
+ * @param handlerName - The name passed to `rpc.addUploadHandler()` on the server.
  * @param data        - Binary payload.
  * @param options     - Upload options.
  * @returns The handler's return value along with hashes and upload stats.
@@ -904,7 +904,7 @@ export function parseContentDisposition(header: string | null): string | null {
 /**
  * Downloads a file from a named server-side handler into memory.
  *
- * @param handlerName - Name passed to `addDownloadHandler()` or `addStreamingDownloadHandler()` on the server.
+ * @param handlerName - Name passed to `rpc.addDownloadHandler()` or `rpc.addStreamingDownloadHandler()` on the server.
  * @param baseUrl     - Endpoint base URL; defaults to the registered endpoint, else the page's origin.
  * @param options     - `downloadId`, request `headers` (auth) and `signal`.
  * @returns The bytes with the server's metadata.
