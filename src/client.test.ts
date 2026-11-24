@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import {
 	_setDefaultEndpoint,
 	addHook,
@@ -231,5 +233,78 @@ describe.for(PROVIDERS)("RPC client against ExpressRpcServer on $name", (provide
 			addHook({ phase: "guard", fn: (ns) => ns !== "__upload__" });
 			await expect(uploadComplete("store", new Uint8Array(1), { baseUrl: url })).rejects.toThrow('Upload to "store" was blocked by a guard');
 		});
+	});
+});
+
+/**
+ * A real HTTP listener that answers 401 unless the request carries `Bearer <token>`, as a host does that guards the
+ * whole `/rpc` path. It records which paths arrived with which Authorization header.
+ */
+async function guardedListener(token: string) {
+	const rpc = createRpcServer({ Math: { add: (a: number, b: number) => a + b, token: () => token } });
+	const seen: string[] = [];
+	const listener: Server = createServer(async (req, res) => {
+		seen.push(`${req.url} ${req.headers.authorization ?? "-"}`);
+		if (req.headers.authorization !== `Bearer ${token}`) return void res.writeHead(401).end();
+		const chunks: Buffer[] = [];
+		for await (const chunk of req) chunks.push(chunk as Buffer);
+		const answer = await rpc.fetch(
+			new Request(`http://127.0.0.1${req.url}`, {
+				method: req.method,
+				headers: req.headers as Record<string, string>,
+				body: chunks.length ? Buffer.concat(chunks) : undefined,
+			}),
+		);
+		res.writeHead(answer.status, Object.fromEntries(answer.headers)).end(Buffer.from(await answer.arrayBuffer()));
+	});
+	await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+	const url = `http://127.0.0.1:${(listener.address() as AddressInfo).port}`;
+	return {
+		url,
+		seen,
+		stop: async () => {
+			await new Promise((resolve) => listener.close(resolve));
+			await rpc.close();
+		},
+	};
+}
+
+describe("headers for a server that guards its schema", () => {
+	type Guarded = { Math: { add(a: number, b: number): Promise<number>; token(): Promise<string> } };
+	beforeEach(() => {
+		clearSchemaCache();
+		clearHooks();
+	});
+
+	it("a client's own headers reach its schema request and calls, and two clients keep their credentials apart", async () => {
+		const [a, b] = await Promise.all([guardedListener("a"), guardedListener("b")]);
+		try {
+			await expect(getRpcClient<Guarded>({ baseUrl: a.url })).rejects.toThrow("Failed to fetch schema: 401");
+			const [rpcA, rpcB] = await Promise.all([
+				getRpcClient<Guarded>({ baseUrl: a.url, headers: { Authorization: "Bearer a" } }),
+				getRpcClient<Guarded>({ baseUrl: b.url, headers: new Headers({ Authorization: "Bearer b" }) }),
+			]);
+			expect([await rpcA.Math.token(), await rpcB.Math.token(), await rpcA.Math.add(2, 3)]).toEqual(["a", "b", 5]);
+			expect(a.seen).toEqual(["/rpc/schema -", "/rpc/schema Bearer a", "/rpc Bearer a", "/rpc Bearer a"]);
+			expect(b.seen).toEqual(["/rpc/schema Bearer b", "/rpc Bearer b"]);
+		} finally {
+			await Promise.all([a.stop(), b.stop()]);
+		}
+	});
+
+	it("setHeaders() reaches the schema request and accepts a Headers instance or pairs; a client's headers win", async () => {
+		const a = await guardedListener("a");
+		try {
+			setHeaders(new Headers({ Authorization: "Bearer a" }));
+			expect((await getSchema(a.url)).map((entry) => (entry.kind === "module" ? entry.moduleName : entry.className))).toEqual(["Math"]);
+			setHeaders([["Authorization", "Bearer a"]]);
+			expect(await (await getRpcClient<Guarded>({ baseUrl: a.url })).Math.add(1, 1)).toBe(2);
+			setHeaders({ Authorization: "Bearer wrong" });
+			clearSchemaCache();
+			const rpc = await getRpcClient<Guarded>({ baseUrl: a.url, headers: { Authorization: "Bearer a" } });
+			expect(await rpc.Math.token()).toBe("a");
+		} finally {
+			await a.stop();
+		}
 	});
 });

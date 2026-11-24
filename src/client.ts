@@ -49,6 +49,12 @@ export interface RpcClientOptions {
 	 * then `""` (the page's own origin).
 	 */
 	baseUrl?: string;
+	/**
+	 * Headers of this client only, e.g. `{ Authorization: "Bearer …" }`. They go with its schema request and every
+	 * call it makes, after the {@link setHeaders} set, so a name in both takes this value. Why per client: a process
+	 * that calls two servers with two credentials cannot share one global set.
+	 */
+	headers?: HeadersInit;
 }
 
 /**
@@ -56,13 +62,18 @@ export interface RpcClientOptions {
  * the result; call this directly only to inspect the API.
  *
  * Uses `POST` because the server answers the schema on any method and some hosts strip or cache `GET` requests.
+ * Sends the {@link setHeaders} set and `headers`, because a host that guards `/rpc` usually guards the schema too.
  *
  * @param baseUrl - Endpoint base URL; defaults to the registered endpoint, else the page's origin.
+ * @param headers - Headers of this request, after the {@link setHeaders} set.
  * @returns The `RpcApiSchema` array: one descriptor per namespace.
  * @throws when the server answers with a non-2xx status.
  */
-export async function getSchema(baseUrl = endpointState.endpoint): Promise<RpcApiSchema> {
-	const response = await fetch(`${baseUrl}${RPC_SCHEMA_PATH}`, { method: "POST" });
+export async function getSchema(baseUrl = endpointState.endpoint, headers?: HeadersInit): Promise<RpcApiSchema> {
+	const response = await fetch(`${baseUrl}${RPC_SCHEMA_PATH}`, {
+		method: "POST",
+		headers: { ...record(customHeaders), ...record(headers) },
+	});
 	if (!response.ok) {
 		throw new Error(`Failed to fetch schema: ${response.status} ${response.statusText}`);
 	}
@@ -98,13 +109,23 @@ export function addHook(hook: ClientHook) {
 	hooks.push(hook);
 }
 
-/** Headers merged into every RPC and upload request. Set via {@link setHeaders}, cleared via {@link clearHooks}. */
+/** Headers merged into every schema, RPC and upload request. Set via {@link setHeaders}, cleared via {@link clearHooks}. */
 let customHeaders: HeadersInit | null = null;
 
 /**
- * Sets headers sent with every RPC call and upload, e.g. `{ Authorization: "Bearer …" }`. Replaces the previous
- * set. Downloads take their headers per call (`download(…, { headers })`), because a download URL is often handed
- * to a different context.
+ * A header set as a plain record. Why: spreading a `Headers` instance or an array of pairs copies nothing usable,
+ * so `setHeaders(new Headers(…))` used to send no header at all.
+ */
+function record(headers: HeadersInit | null | undefined): Record<string, string> {
+	if (!headers) return {};
+	if (typeof (headers as Iterable<unknown>)[Symbol.iterator] === "function") return Object.fromEntries(new Headers(headers));
+	return headers as Record<string, string>;
+}
+
+/**
+ * Sets headers sent with every schema request, RPC call and upload, e.g. `{ Authorization: "Bearer …" }`. Replaces
+ * the previous set. Downloads take their headers per call (`download(…, { headers })`), because a download URL is
+ * often handed to a different context. {@link RpcClientOptions.headers} sets headers for one client.
  */
 export function setHeaders(headers: HeadersInit) {
 	customHeaders = headers;
@@ -137,10 +158,16 @@ async function runClientHooks(
  * Sends one call (guards, fetch, response hooks) and throws for non-2xx answers. The thrown error carries
  * `status`, `body`, `namespace` and `method`, so callers can branch on the server's error JSON.
  */
-async function sendCall(namespaceName: string, methodName: string, args: unknown[], baseUrl: string) {
+async function sendCall(
+	namespaceName: string,
+	methodName: string,
+	args: unknown[],
+	baseUrl: string,
+	headers: Record<string, string>,
+) {
 	const request: RequestInit = {
 		method: "POST",
-		headers: { "Content-Type": "application/json", ...customHeaders },
+		headers: { "Content-Type": "application/json", ...record(customHeaders), ...headers },
 		body: DSON.stringify({ className: namespaceName, methodName, args }),
 	};
 	await runClientGuards(namespaceName, methodName, args, request, `RPC call to ${namespaceName}.${methodName}`);
@@ -161,9 +188,9 @@ async function sendCall(namespaceName: string, methodName: string, args: unknown
  * Returns the caller for a single-response method: POST the call, DSON-decode the body (which restores `Date`,
  * `Map`, `Set`, `BigInt` and typed arrays), run the result hooks, resolve with the value.
  */
-function createRpcMethod(namespaceName: string, methodName: string, baseUrl: string) {
+function createRpcMethod(namespaceName: string, methodName: string, baseUrl: string, headers: Record<string, string>) {
 	return async (...args: unknown[]) => {
-		const { request, response } = await sendCall(namespaceName, methodName, args, baseUrl);
+		const { request, response } = await sendCall(namespaceName, methodName, args, baseUrl, headers);
 		const data = DSON.parse(await response.text());
 		await runClientHooks("result", namespaceName, methodName, args, request, response, data);
 		return data;
@@ -175,9 +202,14 @@ function createRpcMethod(namespaceName: string, methodName: string, baseUrl: str
  * NDJSON stream as it arrives, returns the server generator's return value and throws its `error` frame.
  * Breaking out of `for await` cancels the response body, which stops the server generator.
  */
-function createRpcGeneratorMethod(namespaceName: string, methodName: string, baseUrl: string) {
+function createRpcGeneratorMethod(
+	namespaceName: string,
+	methodName: string,
+	baseUrl: string,
+	headers: Record<string, string>,
+) {
 	return async function* (...args: unknown[]) {
-		const { request, response } = await sendCall(namespaceName, methodName, args, baseUrl);
+		const { request, response } = await sendCall(namespaceName, methodName, args, baseUrl, headers);
 		const reader = response.body!.getReader();
 		const decoder = new TextDecoder();
 		let buffer = "";
@@ -214,8 +246,8 @@ function createRpcGeneratorMethod(namespaceName: string, methodName: string, bas
  */
 const NOT_RPC = new Set(["then", "toJSON"]);
 
-/** One endpoint's client object, built from its schema. */
-function buildClient(schema: RpcApiSchema, baseUrl: string): Record<string, unknown> {
+/** One endpoint's client object, built from its schema; every caller sends `headers` after the global set. */
+function buildClient(schema: RpcApiSchema, baseUrl: string, headers: Record<string, string>): Record<string, unknown> {
 	const client: Record<string, unknown> = {};
 	for (const entry of schema) {
 		if (entry.kind === "module") {
@@ -223,14 +255,14 @@ function buildClient(schema: RpcApiSchema, baseUrl: string): Record<string, unkn
 			const methods: Record<string, unknown> = {};
 			for (const [methodName, desc] of Object.entries(entry.methods)) {
 				methods[methodName] = desc.generator
-					? createRpcGeneratorMethod(moduleName, methodName, baseUrl)
-					: createRpcMethod(moduleName, methodName, baseUrl);
+					? createRpcGeneratorMethod(moduleName, methodName, baseUrl, headers)
+					: createRpcMethod(moduleName, methodName, baseUrl, headers);
 			}
 			client[moduleName] = new Proxy(methods, {
 				get: (target, prop) => {
 					if (typeof prop !== "string" || NOT_RPC.has(prop)) return undefined;
 					// Unknown names still become callers, so the server's 404 explains the typo.
-					return target[prop] ?? createRpcMethod(moduleName, prop, baseUrl);
+					return target[prop] ?? createRpcMethod(moduleName, prop, baseUrl, headers);
 				},
 			});
 		} else {
@@ -246,8 +278,8 @@ function buildClient(schema: RpcApiSchema, baseUrl: string): Record<string, unkn
 							get: (_target, methodName) => {
 								if (typeof methodName !== "string" || NOT_RPC.has(methodName)) return undefined;
 								return entry.methods[methodName]?.generator
-									? createRpcGeneratorMethod(className, methodName, baseUrl)
-									: createRpcMethod(className, methodName, baseUrl);
+									? createRpcGeneratorMethod(className, methodName, baseUrl, headers)
+									: createRpcMethod(className, methodName, baseUrl, headers);
 							},
 						},
 					),
@@ -265,20 +297,22 @@ function buildClient(schema: RpcApiSchema, baseUrl: string): Record<string, unkn
  * - Generator methods: `for await (const chunk of rpc.ChatApi.stream("hi")) …`
  *
  * The schema is fetched once per endpoint and cached for the lifetime of the page or process; a failed fetch is
- * not cached. Call {@link clearSchemaCache} after the server's API changed.
+ * not cached, so a request without the right credentials leaves no schema behind. Call {@link clearSchemaCache}
+ * after the server's API changed.
  *
  * @typeParam T - `typeof` the server's namespace object (export `type RpcApi = typeof RpcApi` on the server).
- * @param options - `baseUrl` of the RPC server; see {@link RpcClientOptions} for the fallback order.
+ * @param options - `baseUrl` of the RPC server and this client's `headers`; see {@link RpcClientOptions}.
  */
 export async function getRpcClient<T extends Record<string, unknown>>(options?: RpcClientOptions) {
 	const baseUrl = options?.baseUrl ?? endpointState.endpoint;
+	const headers = record(options?.headers);
 	let schema = schemas.get(baseUrl);
 	if (!schema) {
-		schema = getSchema(baseUrl);
+		schema = getSchema(baseUrl, headers);
 		schemas.set(baseUrl, schema);
 		schema.catch(() => schemas.delete(baseUrl));
 	}
-	return buildClient(await schema, baseUrl) as T;
+	return buildClient(await schema, baseUrl, headers) as T;
 }
 
 /** Alias for {@link getRpcClient} */
@@ -647,7 +681,7 @@ export async function* upload<T = unknown>(
 			// Percent-encoded: header values are bytes, and a name outside Latin-1 makes fetch() throw.
 			...(options.originalFilename ? { "X-Original-Filename": encodeURIComponent(options.originalFilename) } : {}),
 			...(usedCompression === "gzip" ? { "Content-Encoding": "gzip" } : {}),
-			...customHeaders,
+			...record(customHeaders),
 			...options.headers,
 		},
 		body: requestBody as BodyInit,

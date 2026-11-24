@@ -91,3 +91,8 @@ Wrap: EVERY lead becomes a test | .vae/VERIFY.py rule | one MEMORY line with BC,
 2026-11-23T20:32:28Z s=472a9d74 FINDING examples/files.ts#files T/width learn=verifier: scripts/docs.ts --check in make lint enforces the width
 2026-11-23T20:32:28Z s=472a9d74 FINDING README.md:528,746 B01 learn=verifier: the gate's prose check enforces it
 2026-11-23T20:32:28Z s=472a9d74 FINDING tmp/bench-compare run4-old, run5-old learn=memory: .vae/MEMORY.md line: run make bench in the foreground, since ending a turn starts the gate
+2026-11-24T22:39:12Z s=dcdb118f DONE fp=ac6c6b0a8dc2 cov=92.4% paths=CHANGELOG.md,README.md,bun.lock,docs/index.html(+3)
+2026-11-24T22:39:12Z s=dcdb118f FINDING src/client.ts:getSchema learn=test: VERIFIED: src/client.test.ts 'headers for a server that guards its schema' runs a real HTTP listener that rejects requests without the token.
+2026-11-24T22:39:12Z s=dcdb118f FINDING src/client.ts:sendCall and upload (customHeaders spread) learn=test: VERIFIED: the setHeaders test passes a Headers instance and pairs against the guarded listener.
+2026-11-24T22:39:12Z s=dcdb118f FINDING src/client.ts:RpcClientOptions.headers learn=test: VERIFIED: covered by the two-listener test.
+2026-11-24T22:39:12Z s=dcdb118f FINDING src/client.test.ts:299 learn=none: VERIFIED: tsc in make lint catches it.

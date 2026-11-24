@@ -459,6 +459,8 @@ console.log(answered); // 1
 
 A client guard must return `true`: any other value (also `undefined`) aborts the call before it is sent. `"response"` hooks see the raw `Response`, `"result"` hooks the decoded value. `clearHooks()` removes all hooks and headers.
 
+`setHeaders()` applies to the whole process: every schema request, call and upload sends its headers. For one client only, pass them to `getRpcClient({ baseUrl, headers })`. That client's schema request and calls send them after the global set, so a name in both takes the client's value. A process that calls two servers with two credentials gives each client its own headers. VERIFIED by `src/client.test.ts`: a client reaches a listener that answers 401 to a schema request without its token. `setHeaders()` accepts a `Headers` instance, pairs or a plain object.
+
 ## Vite and Astro
 
 **Optional: you need neither.** defuss-rpc runs on its own, as [Serve it](#2-serve-it) shows. Use these only when your app already runs on Vite or Astro and its dev server should start the RPC server for you. They are two packages of their own, so that defuss-rpc depends on no build tool and no framework: [defuss-rpc-vite](integrations/vite/README.md) starts an `ExpressRpcServer` beside `vite dev` and serves `virtual:defuss-rpc`, which registers that server as the client's default endpoint; [defuss-rpc-astro](integrations/astro/README.md) wraps the plugin and adds `Astro.locals.rpcEndpoint`. Without a provider, the RPC server runs on `Bun.serve` at port 63920, so the dev server runs on Bun (`bunx --bun vite`, `bunx --bun astro dev`).

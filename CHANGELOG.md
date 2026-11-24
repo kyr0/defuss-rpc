@@ -1,5 +1,19 @@
 # Changelog
 
+## 4.1.0
+
+Credentials for servers that guard their schema.
+
+### New
+
+- `getRpcClient({ baseUrl, headers })` takes headers for one client. Its schema request and every call it makes send them after the `setHeaders()` set, so one process can call two servers with two credentials.
+- `getSchema(baseUrl, headers)` takes the headers of the schema request.
+
+### Fixed
+
+- The schema request sends the `setHeaders()` set. A host that answered 401 to `/rpc/schema` without credentials could not be used with `getRpcClient()` before.
+- `setHeaders()` with a `Headers` instance or an array of pairs sends those headers. Object spread had copied nothing from them, so calls and uploads went out without them.
+
 ## 4.0.0
 
 Servers of their own: `createRpcServer()` returns an RPC server instead of registering on one per process. defuss-rpc-vite and defuss-rpc-astro move to 4.0.0 with it (peer range ^4.0.0) and take the server as `rpc`.
