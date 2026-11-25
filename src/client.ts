@@ -40,6 +40,26 @@ export function _setDefaultEndpoint(url: string): void {
 	endpointState.endpoint = url;
 }
 
+/**
+ * What one client context owns: its hooks, its {@link setHeaders} set, its schema cache and an optional default
+ * endpoint. The module functions use one process-wide state; {@link createRpcContext} makes another. Why: a library
+ * that calls its own server through defuss-rpc must neither run the application's hooks nor send its headers, and the
+ * application must not see the library's. VERIFIED: a client guard added with `addHook()` blocked a defuss-backplane
+ * call made through the process-wide client.
+ */
+interface ClientState {
+	hooks: ClientHook[];
+	headers: HeadersInit | null;
+	schemas: Map<string, Promise<RpcApiSchema>>;
+	baseUrl?: string;
+}
+
+/** The state of the module functions. */
+const globalState: ClientState = { hooks: [], headers: null, schemas: new Map() };
+
+/** A call's endpoint: its own `baseUrl`, then the context's, then the registered one, then `""` (the page's origin). */
+const endpointOf = (state: ClientState, baseUrl?: string) => baseUrl ?? state.baseUrl ?? endpointState.endpoint;
+
 /** Options of {@link getRpcClient}. */
 export interface RpcClientOptions {
 	/**
@@ -69,34 +89,44 @@ export interface RpcClientOptions {
  * @returns The `RpcApiSchema` array: one descriptor per namespace.
  * @throws when the server answers with a non-2xx status.
  */
-export async function getSchema(baseUrl = endpointState.endpoint, headers?: HeadersInit): Promise<RpcApiSchema> {
-	const response = await fetch(`${baseUrl}${RPC_SCHEMA_PATH}`, {
+export function getSchema(baseUrl?: string, headers?: HeadersInit): Promise<RpcApiSchema> {
+	return fetchSchema(globalState, baseUrl, headers);
+}
+
+/**
+ * The schema request of one state. A failure carries `status` and `body`, as a failed call does, so a caller can tell
+ * a missing credential (401) from a missing endpoint (404) or an unavailable server (503).
+ */
+async function fetchSchema(state: ClientState, baseUrl: string | undefined, headers?: HeadersInit): Promise<RpcApiSchema> {
+	const response = await fetch(`${endpointOf(state, baseUrl)}${RPC_SCHEMA_PATH}`, {
 		method: "POST",
-		headers: mergeHeaders(customHeaders, headers),
+		headers: mergeHeaders(state.headers, headers),
 	});
 	if (!response.ok) {
-		throw new Error(`Failed to fetch schema: ${response.status} ${response.statusText}`);
+		throw Object.assign(new Error(`Failed to fetch schema: ${response.status} ${response.statusText}`), {
+			status: response.status,
+			body: await response.text(),
+		});
 	}
 	return response.json();
 }
 
 /**
- * Schemas by endpoint, filled by {@link getRpcClient}.
- * Why per endpoint: two clients for two servers must not share one server's method list.
+ * Forgets every cached schema of the module functions; the next {@link getRpcClient} call fetches it again (e.g.
+ * after a server reload). Why the cache is per endpoint: two clients for two servers must not share one method list.
  */
-const schemas = new Map<string, Promise<RpcApiSchema>>();
-
-/** Forgets every cached schema; the next {@link getRpcClient} call fetches it again (e.g. after a server reload). */
 export function clearSchemaCache() {
-	schemas.clear();
+	globalState.schemas.clear();
 }
-
-const hooks: ClientHook[] = [];
 
 /** Removes every client hook and the headers set by {@link setHeaders}. For test isolation and logout flows. */
 export function clearHooks() {
-	hooks.length = 0;
-	customHeaders = null;
+	resetState(globalState);
+}
+
+function resetState(state: ClientState) {
+	state.hooks.length = 0;
+	state.headers = null;
 }
 
 /**
@@ -106,11 +136,8 @@ export function clearHooks() {
  * `"__upload__"`), in the order they were added.
  */
 export function addHook(hook: ClientHook) {
-	hooks.push(hook);
+	globalState.hooks.push(hook);
 }
-
-/** Headers merged into every schema, RPC and upload request. Set via {@link setHeaders}, cleared via {@link clearHooks}. */
-let customHeaders: HeadersInit | null = null;
 
 /**
  * Header sets merged into one record, later sets replacing a name of earlier ones. Why through `Headers`: spreading a
@@ -130,11 +157,18 @@ function mergeHeaders(...sets: (HeadersInit | null | undefined)[]): Record<strin
  * often handed to a different context. {@link RpcClientOptions.headers} sets headers for one client.
  */
 export function setHeaders(headers: HeadersInit) {
-	customHeaders = headers;
+	globalState.headers = headers;
 }
 
 /** Runs the guard hooks; throws when one returns a falsy value. */
-async function runClientGuards(namespace: string, method: string, args: unknown[], request: RequestInit, what: string) {
+async function runClientGuards(
+	hooks: readonly ClientHook[],
+	namespace: string,
+	method: string,
+	args: unknown[],
+	request: RequestInit,
+	what: string,
+) {
 	for (const hook of hooks) {
 		if (hook.phase === "guard" && !(await hook.fn(namespace, method, args, request))) {
 			throw new Error(`${what} was blocked by a guard`);
@@ -143,6 +177,7 @@ async function runClientGuards(namespace: string, method: string, args: unknown[
 }
 
 async function runClientHooks(
+	hooks: readonly ClientHook[],
 	phase: "response" | "result",
 	namespace: string,
 	method: string,
@@ -161,6 +196,7 @@ async function runClientHooks(
  * `status`, `body`, `namespace` and `method`, so callers can branch on the server's error JSON.
  */
 async function sendCall(
+	state: ClientState,
 	namespaceName: string,
 	methodName: string,
 	args: unknown[],
@@ -169,12 +205,12 @@ async function sendCall(
 ) {
 	const request: RequestInit = {
 		method: "POST",
-		headers: mergeHeaders({ "Content-Type": "application/json" }, customHeaders, headers),
+		headers: mergeHeaders({ "Content-Type": "application/json" }, state.headers, headers),
 		body: DSON.stringify({ className: namespaceName, methodName, args }),
 	};
-	await runClientGuards(namespaceName, methodName, args, request, `RPC call to ${namespaceName}.${methodName}`);
+	await runClientGuards(state.hooks, namespaceName, methodName, args, request, `RPC call to ${namespaceName}.${methodName}`);
 	const response = await fetch(`${baseUrl}${RPC_PATH}`, request);
-	await runClientHooks("response", namespaceName, methodName, args, request, response);
+	await runClientHooks(state.hooks, "response", namespaceName, methodName, args, request, response);
 	if (!response.ok) {
 		throw Object.assign(new Error(`RPC call failed: ${response.status} ${response.statusText}`), {
 			status: response.status,
@@ -190,11 +226,17 @@ async function sendCall(
  * Returns the caller for a single-response method: POST the call, DSON-decode the body (which restores `Date`,
  * `Map`, `Set`, `BigInt` and typed arrays), run the result hooks, resolve with the value.
  */
-function createRpcMethod(namespaceName: string, methodName: string, baseUrl: string, headers: Record<string, string>) {
+function createRpcMethod(
+	state: ClientState,
+	namespaceName: string,
+	methodName: string,
+	baseUrl: string,
+	headers: Record<string, string>,
+) {
 	return async (...args: unknown[]) => {
-		const { request, response } = await sendCall(namespaceName, methodName, args, baseUrl, headers);
+		const { request, response } = await sendCall(state, namespaceName, methodName, args, baseUrl, headers);
 		const data = DSON.parse(await response.text());
-		await runClientHooks("result", namespaceName, methodName, args, request, response, data);
+		await runClientHooks(state.hooks, "result", namespaceName, methodName, args, request, response, data);
 		return data;
 	};
 }
@@ -205,13 +247,14 @@ function createRpcMethod(namespaceName: string, methodName: string, baseUrl: str
  * Breaking out of `for await` cancels the response body, which stops the server generator.
  */
 function createRpcGeneratorMethod(
+	state: ClientState,
 	namespaceName: string,
 	methodName: string,
 	baseUrl: string,
 	headers: Record<string, string>,
 ) {
 	return async function* (...args: unknown[]) {
-		const { request, response } = await sendCall(namespaceName, methodName, args, baseUrl, headers);
+		const { request, response } = await sendCall(state, namespaceName, methodName, args, baseUrl, headers);
 		const reader = response.body!.getReader();
 		const decoder = new TextDecoder();
 		let buffer = "";
@@ -236,7 +279,7 @@ function createRpcGeneratorMethod(
 		} finally {
 			await reader.cancel().catch(() => {});
 		}
-		await runClientHooks("result", namespaceName, methodName, args, request, response, returnValue);
+		await runClientHooks(state.hooks, "result", namespaceName, methodName, args, request, response, returnValue);
 		return returnValue;
 	};
 }
@@ -249,7 +292,12 @@ function createRpcGeneratorMethod(
 const NOT_RPC = new Set(["then", "toJSON"]);
 
 /** One endpoint's client object, built from its schema; every caller sends `headers` after the global set. */
-function buildClient(schema: RpcApiSchema, baseUrl: string, headers: Record<string, string>): Record<string, unknown> {
+function buildClient(
+	state: ClientState,
+	schema: RpcApiSchema,
+	baseUrl: string,
+	headers: Record<string, string>,
+): Record<string, unknown> {
 	const client: Record<string, unknown> = {};
 	for (const entry of schema) {
 		if (entry.kind === "module") {
@@ -257,14 +305,14 @@ function buildClient(schema: RpcApiSchema, baseUrl: string, headers: Record<stri
 			const methods: Record<string, unknown> = {};
 			for (const [methodName, desc] of Object.entries(entry.methods)) {
 				methods[methodName] = desc.generator
-					? createRpcGeneratorMethod(moduleName, methodName, baseUrl, headers)
-					: createRpcMethod(moduleName, methodName, baseUrl, headers);
+					? createRpcGeneratorMethod(state, moduleName, methodName, baseUrl, headers)
+					: createRpcMethod(state, moduleName, methodName, baseUrl, headers);
 			}
 			client[moduleName] = new Proxy(methods, {
 				get: (target, prop) => {
 					if (typeof prop !== "string" || NOT_RPC.has(prop)) return undefined;
 					// Unknown names still become callers, so the server's 404 explains the typo.
-					return target[prop] ?? createRpcMethod(moduleName, prop, baseUrl, headers);
+					return target[prop] ?? createRpcMethod(state, moduleName, prop, baseUrl, headers);
 				},
 			});
 		} else {
@@ -280,8 +328,8 @@ function buildClient(schema: RpcApiSchema, baseUrl: string, headers: Record<stri
 							get: (_target, methodName) => {
 								if (typeof methodName !== "string" || NOT_RPC.has(methodName)) return undefined;
 								return entry.methods[methodName]?.generator
-									? createRpcGeneratorMethod(className, methodName, baseUrl, headers)
-									: createRpcMethod(className, methodName, baseUrl, headers);
+									? createRpcGeneratorMethod(state, className, methodName, baseUrl, headers)
+									: createRpcMethod(state, className, methodName, baseUrl, headers);
 							},
 						},
 					),
@@ -305,16 +353,20 @@ function buildClient(schema: RpcApiSchema, baseUrl: string, headers: Record<stri
  * @typeParam T - `typeof` the server's namespace object (export `type RpcApi = typeof RpcApi` on the server).
  * @param options - `baseUrl` of the RPC server and this client's `headers`; see {@link RpcClientOptions}.
  */
-export async function getRpcClient<T extends Record<string, unknown>>(options?: RpcClientOptions) {
-	const baseUrl = options?.baseUrl ?? endpointState.endpoint;
+export function getRpcClient<T extends Record<string, unknown>>(options?: RpcClientOptions): Promise<T> {
+	return clientOf<T>(globalState, options);
+}
+
+async function clientOf<T>(state: ClientState, options?: RpcClientOptions): Promise<T> {
+	const baseUrl = endpointOf(state, options?.baseUrl);
 	const headers = mergeHeaders(options?.headers);
-	let schema = schemas.get(baseUrl);
+	let schema = state.schemas.get(baseUrl);
 	if (!schema) {
-		schema = getSchema(baseUrl, headers);
-		schemas.set(baseUrl, schema);
-		schema.catch(() => schemas.delete(baseUrl));
+		schema = fetchSchema(state, baseUrl, headers);
+		state.schemas.set(baseUrl, schema);
+		schema.catch(() => state.schemas.delete(baseUrl));
 	}
-	return buildClient(await schema, baseUrl, headers) as T;
+	return buildClient(state, await schema, baseUrl, headers) as T;
 }
 
 /** Alias for {@link getRpcClient} */
@@ -564,12 +616,21 @@ function sanitizeUploadId(value: string): string {
  * }
  * ```
  */
-export async function* upload<T = unknown>(
+export function upload<T = unknown>(
 	handlerName: string,
 	data: BinarySource,
 	options: UploadOptions = {},
 ): AsyncGenerator<UploadEvent<T>, void, undefined> {
-	const baseUrl = options.baseUrl ?? endpointState.endpoint;
+	return uploadOf<T>(globalState, handlerName, data, options);
+}
+
+async function* uploadOf<T>(
+	state: ClientState,
+	handlerName: string,
+	data: BinarySource,
+	options: UploadOptions,
+): AsyncGenerator<UploadEvent<T>, void, undefined> {
+	const baseUrl = endpointOf(state, options.baseUrl);
 	const compression = options.compression ?? "auto";
 	const chunkSize = options.chunkSize ?? 256 * 1024;
 	const enableSSE = options.progress !== false;
@@ -584,7 +645,7 @@ export async function* upload<T = unknown>(
 		try {
 			const headRes = await fetch(
 				`${baseUrl}${RPC_UPLOAD_PATH}/${uploadId}`,
-				{ method: "HEAD", headers: mergeHeaders(customHeaders, options.headers), signal: options.signal },
+				{ method: "HEAD", headers: mergeHeaders(state.headers, options.headers), signal: options.signal },
 			);
 			if (headRes.ok) {
 				offset = Number.parseInt(
@@ -685,7 +746,7 @@ export async function* upload<T = unknown>(
 				...(options.originalFilename ? { "X-Original-Filename": encodeURIComponent(options.originalFilename) } : {}),
 				...(usedCompression === "gzip" ? { "Content-Encoding": "gzip" } : {}),
 			},
-			customHeaders,
+			state.headers,
 			options.headers,
 		),
 		body: requestBody as BodyInit,
@@ -697,7 +758,7 @@ export async function* upload<T = unknown>(
 	}
 
 	try {
-		await runClientGuards("__upload__", handlerName, [totalBytes], reqInit, `Upload to "${handlerName}"`);
+		await runClientGuards(state.hooks, "__upload__", handlerName, [totalBytes], reqInit, `Upload to "${handlerName}"`);
 	} catch (error) {
 		eventSource?.close();
 		throw error;
@@ -765,7 +826,7 @@ export async function* upload<T = unknown>(
 	}
 
 	// -- Response hooks -----------------------------------------------
-	await runClientHooks("response", "__upload__", handlerName, [totalBytes], reqInit, fetchResponse);
+	await runClientHooks(state.hooks, "response", "__upload__", handlerName, [totalBytes], reqInit, fetchResponse);
 
 	if (!fetchResponse.ok) {
 		const body = await fetchResponse.text();
@@ -806,7 +867,7 @@ export async function* upload<T = unknown>(
 	// -- Result hooks -------------------------------------------------
 	const resultValue = resultFrame?.value as T;
 
-	await runClientHooks("result", "__upload__", handlerName, [totalBytes], reqInit, fetchResponse, resultValue);
+	await runClientHooks(state.hooks, "result", "__upload__", handlerName, [totalBytes], reqInit, fetchResponse, resultValue);
 
 	// yield final complete event
 	yield {
@@ -836,13 +897,22 @@ export async function* upload<T = unknown>(
  * // sha256: hex digest of the bytes the server stored; result.files: what the handler returned
  * ```
  */
-export async function uploadComplete<T = unknown>(
+export function uploadComplete<T = unknown>(
 	handlerName: string,
 	data: BinarySource,
 	options: UploadOptions = {},
 ): Promise<UploadResult<T>> {
+	return uploadCompleteOf<T>(globalState, handlerName, data, options);
+}
+
+async function uploadCompleteOf<T>(
+	state: ClientState,
+	handlerName: string,
+	data: BinarySource,
+	options: UploadOptions,
+): Promise<UploadResult<T>> {
 	let result: UploadResult<T> | undefined;
-	for await (const event of upload<T>(handlerName, data, {
+	for await (const event of uploadOf<T>(state, handlerName, data, {
 		...options,
 		progress: false, // skip SSE for one-shot
 	})) {
@@ -998,5 +1068,69 @@ export async function downloadAsBlob(
 			filename: parseContentDisposition(response.headers.get("Content-Disposition")),
 			contentType: response.headers.get("Content-Type") || blob.type || "application/octet-stream",
 		},
+	};
+}
+
+// -- Client contexts ------------------------------------------------------------
+
+/** Options of {@link createRpcContext}. */
+export interface RpcContextOptions {
+	/** Default endpoint of the context's calls, uploads and downloads; a call's own `baseUrl` still wins. */
+	baseUrl?: string;
+	/** The context's first {@link RpcClientContext.setHeaders} set, e.g. its credential. */
+	headers?: HeadersInit;
+}
+
+/**
+ * A client of its own: the module functions of this file with hooks, headers and a schema cache that no other context
+ * and not the module functions share. Headers apply as with the module functions: to schema requests, calls and
+ * uploads, not to downloads.
+ */
+export interface RpcClientContext {
+	getRpcClient<T extends Record<string, unknown>>(options?: RpcClientOptions): Promise<T>;
+	getSchema(baseUrl?: string, headers?: HeadersInit): Promise<RpcApiSchema>;
+	addHook(hook: ClientHook): void;
+	setHeaders(headers: HeadersInit): void;
+	clearHooks(): void;
+	clearSchemaCache(): void;
+	upload<T = unknown>(
+		handlerName: string,
+		data: BinarySource,
+		options?: UploadOptions,
+	): AsyncGenerator<UploadEvent<T>, void, undefined>;
+	uploadComplete<T = unknown>(handlerName: string, data: BinarySource, options?: UploadOptions): Promise<UploadResult<T>>;
+	download<T = unknown>(handlerName: string, baseUrl?: string, options?: DownloadOptions): Promise<DownloadResult<T>>;
+	downloadAsBlob(
+		handlerName: string,
+		baseUrl?: string,
+		options?: DownloadOptions,
+	): Promise<{ blob: Blob; result: DownloadResult }>;
+}
+
+/**
+ * Creates a client context: hooks, headers and a schema cache of its own, as `createRpcServer()` gives a server its
+ * own state. Use one in a library that calls its own server, so the application's `addHook()` and `setHeaders()` do
+ * not reach those calls and the library's do not reach the application's.
+ *
+ * @example
+ * ```ts
+ * const backplane = createRpcContext({ baseUrl: "http://127.0.0.1:43127", headers: { Authorization: "Bearer …" } });
+ * const rpc = await backplane.getRpcClient<BackplaneApi>();
+ * ```
+ */
+export function createRpcContext(options: RpcContextOptions = {}): RpcClientContext {
+	const state: ClientState = { hooks: [], headers: options.headers ?? null, schemas: new Map(), baseUrl: options.baseUrl };
+	return {
+		getRpcClient: (clientOptions) => clientOf(state, clientOptions),
+		getSchema: (baseUrl, headers) => fetchSchema(state, baseUrl, headers),
+		addHook: (hook) => void state.hooks.push(hook),
+		setHeaders: (headers) => void (state.headers = headers),
+		clearHooks: () => resetState(state),
+		clearSchemaCache: () => state.schemas.clear(),
+		upload: (handlerName, data, uploadOptions = {}) => uploadOf(state, handlerName, data, uploadOptions),
+		uploadComplete: (handlerName, data, uploadOptions = {}) => uploadCompleteOf(state, handlerName, data, uploadOptions),
+		download: (handlerName, baseUrl, downloadOptions) => download(handlerName, endpointOf(state, baseUrl), downloadOptions),
+		downloadAsBlob: (handlerName, baseUrl, downloadOptions) =>
+			downloadAsBlob(handlerName, endpointOf(state, baseUrl), downloadOptions),
 	};
 }

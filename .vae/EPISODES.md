@@ -101,3 +101,8 @@ Wrap: EVERY lead becomes a test | .vae/VERIFY.py rule | one MEMORY line with BC,
 2026-11-24T23:54:28Z s=472a9d74 FINDING src/client.ts:mergeHeaders (was record) learn=test: src/client.test.ts 'a client's headers win' failed (401) before the fix, passes after
 2026-11-24T23:54:28Z s=472a9d74 FINDING src/client.ts:upload resume HEAD learn=test: the same test asserts the HEAD arrives with 'Bearer a'; it failed with '/rpc/upload/u1 -' before the fix
 2026-11-24T23:54:28Z s=472a9d74 FINDING README.md:headers paragraph learn=none: platform limit of EventSource, no code defect to test
+2026-11-25T00:45:06Z s=dcdb118f DONE fp=9ec50d2bce18 cov=92.4% paths=ARCH.md,CHANGELOG.md,README.md,bun.lock(+5)
+2026-11-25T00:45:06Z s=dcdb118f FINDING src/client.ts:ClientState and the module state learn=test: VERIFIED: src/client.test.ts 'client contexts' (3 tests) covers isolation of hooks, headers, schema caches, uploads and the context endpoint.
+2026-11-25T00:45:06Z s=dcdb118f FINDING src/client.ts:fetchSchema learn=test: VERIFIED: covered by 'a failed schema request carries status and body'.
+2026-11-25T00:45:06Z s=dcdb118f FINDING src/client.ts:getSchema/getRpcClient/upload/uploadComplete signatures learn=none: VERIFIED: type check and the unchanged tests prove the public signatures.
+2026-11-25T00:45:06Z s=dcdb118f FINDING examples/client.ts#client-context and README.md:467 learn=test: VERIFIED: e2e compares every printed line with its comment.

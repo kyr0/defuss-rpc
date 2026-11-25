@@ -6,6 +6,7 @@
 // #region client
 import {
 	addHook,
+	createRpcContext,
 	download,
 	getRpcClient,
 	setHeaders,
@@ -73,3 +74,14 @@ addHook({ phase: "result", fn: () => void answered++ });
 await rpc.MathApi.multiply(6, 7);
 console.log(answered); // 1
 // #endregion client-hooks
+
+// #region client-context
+// hooks, headers and a schema cache of its own:
+// the hook and the header above do not reach it
+const own = createRpcContext({ baseUrl });
+let ownAnswers = 0;
+own.addHook({ phase: "result", fn: () => void ownAnswers++ });
+const isolated = await own.getRpcClient<RpcApi>();
+await isolated.MathApi.multiply(6, 7);
+console.log(answered, ownAnswers); // 1 1
+// #endregion client-context

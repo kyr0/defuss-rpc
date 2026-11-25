@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.2.0
+
+Client contexts: the client gets state of its own, as the server did in 4.0.0.
+
+### New
+
+- `createRpcContext({ baseUrl, headers })` returns `getRpcClient`, `getSchema`, `addHook`, `setHeaders`, `clearHooks`, `clearSchemaCache`, `upload`, `uploadComplete`, `download` and `downloadAsBlob` with hooks, headers and a schema cache of their own. The module functions keep one process-wide context. A library that calls its own server uses a context, so the application's hooks and headers do not reach those calls, and the library's do not reach the application's.
+- A failed schema request throws with `status` and `body`, as a failed call does.
+
 ## 4.1.0
 
 Credentials for servers that guard their schema.

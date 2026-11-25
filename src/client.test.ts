@@ -7,6 +7,7 @@ import {
 	clearHooks,
 	clearSchemaCache,
 	createRpcClient,
+	createRpcContext,
 	getRpcClient,
 	getSchema,
 	setHeaders,
@@ -242,10 +243,12 @@ describe.for(PROVIDERS)("RPC client against ExpressRpcServer on $name", (provide
  */
 async function guardedListener(token: string) {
 	const rpc = createRpcServer({ Math: { add: (a: number, b: number) => a + b, token: () => token } });
+	rpc.addUploadHandler("keep", (data) => data.byteLength);
+	rpc.addDownloadHandler("bytes", () => new Uint8Array([1, 2, 3]));
 	const seen: string[] = [];
 	const listener: Server = createServer(async (req, res) => {
 		seen.push(`${req.url} ${req.headers.authorization ?? "-"}`);
-		if (req.headers.authorization !== `Bearer ${token}`) return void res.writeHead(401).end();
+		if (req.headers.authorization !== `Bearer ${token}`) return void res.writeHead(401).end("token required");
 		const chunks: Buffer[] = [];
 		for await (const chunk of req) chunks.push(chunk as Buffer);
 		const answer = await rpc.fetch(
@@ -312,6 +315,76 @@ describe("headers for a server that guards its schema", () => {
 			const options = { baseUrl: a.url, progress: false, headers, uploadId: "u1" };
 			await expect(uploadComplete("none", new Uint8Array([1]), options)).rejects.toThrow();
 			expect(a.seen.slice(-2)).toEqual(["/rpc/upload/u1 Bearer a", "/rpc/upload Bearer a"]);
+		} finally {
+			await a.stop();
+		}
+	});
+});
+
+describe("client contexts", () => {
+	type Guarded = { Math: { add(a: number, b: number): Promise<number>; token(): Promise<string> } };
+	beforeEach(() => {
+		clearSchemaCache();
+		clearHooks();
+	});
+
+	it("a context's hooks, headers and schema cache stay its own, and the module functions' stay theirs", async () => {
+		const a = await guardedListener("a");
+		try {
+			// The application's guard blocks every call of the module functions.
+			addHook({ phase: "guard", fn: () => false });
+			const results: string[] = [];
+			const ctx = createRpcContext({ baseUrl: a.url, headers: { Authorization: "Bearer a" } });
+			ctx.addHook({ phase: "result", fn: (_namespace, method) => void results.push(method) });
+			const rpc = await ctx.getRpcClient<Guarded>();
+			expect(await rpc.Math.add(2, 3)).toBe(5);
+			await ctx.getRpcClient<Guarded>();
+			const global = await getRpcClient<Guarded>({ baseUrl: a.url, headers: { Authorization: "Bearer a" } });
+			await expect(global.Math.add(1, 1)).rejects.toThrow("RPC call to Math.add was blocked by a guard");
+			expect(results).toEqual(["add"]);
+			// One schema request per state: the context cached its own, the module functions fetched theirs.
+			expect(a.seen.filter((line) => line.startsWith("/rpc/schema"))).toHaveLength(2);
+			// The context's headers never reach the module functions, and clearing one state leaves the other.
+			clearHooks();
+			clearSchemaCache();
+			await expect(getRpcClient<Guarded>({ baseUrl: a.url })).rejects.toMatchObject({ status: 401 });
+			ctx.clearSchemaCache();
+			expect(await (await ctx.getRpcClient<Guarded>()).Math.token()).toBe("a");
+			ctx.setHeaders({ Authorization: "Bearer wrong" });
+			await expect(rpc.Math.add(1, 1)).rejects.toMatchObject({ status: 401 });
+			ctx.clearHooks();
+			await expect(ctx.getSchema()).rejects.toMatchObject({ status: 401 });
+		} finally {
+			await a.stop();
+		}
+	});
+
+	it("a context uploads with its own headers and hooks, and downloads from its endpoint", async () => {
+		const a = await guardedListener("a");
+		try {
+			addHook({ phase: "guard", fn: () => false });
+			const ctx = createRpcContext({ baseUrl: a.url, headers: { Authorization: "Bearer a" } });
+			const { result } = await ctx.uploadComplete<number>("keep", new Uint8Array(1000));
+			expect(result).toBe(1000);
+			await expect(uploadComplete("keep", new Uint8Array(1), { baseUrl: a.url })).rejects.toThrow("blocked by a guard");
+			ctx.addHook({ phase: "guard", fn: (namespace) => namespace !== "__upload__" });
+			await expect(ctx.uploadComplete("keep", new Uint8Array(1))).rejects.toThrow('Upload to "keep" was blocked by a guard');
+			// Downloads take their headers per call, as with the module functions.
+			const { data } = await ctx.download("bytes", undefined, { headers: { Authorization: "Bearer a" } });
+			expect([...data]).toEqual([1, 2, 3]);
+		} finally {
+			await a.stop();
+		}
+	});
+
+	it("a failed schema request carries status and body, as a failed call does", async () => {
+		const a = await guardedListener("a");
+		try {
+			await expect(getSchema(a.url)).rejects.toMatchObject({
+				message: "Failed to fetch schema: 401 Unauthorized",
+				status: 401,
+				body: "token required",
+			});
 		} finally {
 			await a.stop();
 		}

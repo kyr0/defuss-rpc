@@ -249,6 +249,7 @@ In an Astro project without the integration, the same handler is a route: `expor
 ```ts
 import {
   addHook,
+  createRpcContext,
   download,
   getRpcClient,
   setHeaders,
@@ -460,6 +461,23 @@ console.log(answered); // 1
 A client guard must return `true`: any other value (also `undefined`) aborts the call before it is sent. `"response"` hooks see the raw `Response`, `"result"` hooks the decoded value. `clearHooks()` removes all hooks and headers.
 
 `setHeaders()` applies to the whole process: every schema request, call and upload sends its headers. For one client only, pass them to `getRpcClient({ baseUrl, headers })`. That client's schema request and calls send them after the global set, so a name in both takes the client's value, whatever its case. A process that calls two servers with two credentials gives each client its own headers. VERIFIED by `src/client.test.ts`: a client reaches a listener that answers 401 to a schema request without its token. `setHeaders()` accepts a `Headers` instance, pairs or a plain object. The upload progress stream is an `EventSource`, which sends no custom headers; behind such a host, pass `progress: false`.
+
+A library that calls its own server should share none of this with the application. `createRpcContext({ baseUrl, headers })` returns the client functions, from `getRpcClient()` to `download()`, with hooks, headers and a schema cache of their own. The module functions are one more context, for the whole process. Headers apply in a context as they do in the module functions: to schema requests, calls and uploads, not to downloads. VERIFIED by `src/client.test.ts`: an application's guard that blocks every call leaves a context's calls and uploads alone, and a context's headers never reach the module functions.
+
+<!-- example: examples/client.ts#client-context -->
+```ts
+// hooks, headers and a schema cache of its own:
+// the hook and the header above do not reach it
+const own = createRpcContext({ baseUrl });
+let ownAnswers = 0;
+own.addHook({ phase: "result", fn: () => void ownAnswers++ });
+const isolated = await own.getRpcClient<RpcApi>();
+await isolated.MathApi.multiply(6, 7);
+console.log(answered, ownAnswers); // 1 1
+```
+<!-- /example -->
+
+A failed schema request throws with `status` and `body`, as a failed call does, so a client can tell a missing credential (401) from a missing endpoint (404).
 
 ## Vite and Astro
 
