@@ -152,29 +152,47 @@ export function createUploadState(uploadDir: string): UploadState {
 }
 
 /**
- * Reads a file as a stream of chunks of at most `chunkSize` bytes.
+ * Reads a file as a stream of chunks of at most `chunkSize` bytes, plus `close()`, which releases the file whether or
+ * not anyone read or cancelled the stream.
  *
  * Why not `readFile`: a streaming upload handler exists for files too large to buffer, so replaying the temp file
- * must hold one chunk at a time; the next chunk is read only when the consumer pulls.
+ * must hold one chunk at a time; the next chunk is read only when the consumer pulls. Why `close()` besides `cancel()`:
+ * a stream pulls its first chunk as soon as it exists, so the file is open even when the handler never reads it, and
+ * a stream that a reader still locks cannot be cancelled. VERIFIED: Bun 1.4 fails with "A FileHandle object was
+ * closed during garbage collection" when a streaming handler threw without reading (`src/upload.test.ts`).
  */
-export function fileChunks(path: string, chunkSize = FILE_CHUNK_BYTES): ReadableStream<Uint8Array> {
-	let handle: Awaited<ReturnType<typeof open>> | undefined;
-	return new ReadableStream<Uint8Array>({
+export function openFileChunks(path: string, chunkSize = FILE_CHUNK_BYTES) {
+	let opening: ReturnType<typeof open> | undefined;
+	let closed = false;
+	/** Takes the handle out of the stream before closing it, so a concurrent pull or a second call closes nothing. */
+	async function close() {
+		closed = true;
+		const pending = opening;
+		opening = undefined;
+		await (await pending?.catch(() => undefined))?.close();
+	}
+	const stream = new ReadableStream<Uint8Array>({
 		async pull(controller) {
-			handle ??= await open(path, "r");
+			if (closed) return;
+			opening ??= open(path, "r");
+			const handle = await opening;
+			// close() ran while the file was opening: it closes the handle, and the stream ends here.
+			if (closed) return;
 			const buffer = new Uint8Array(chunkSize);
 			const { bytesRead } = await handle.read(buffer, 0, chunkSize, null);
 			if (bytesRead === 0) {
-				await handle.close();
-				handle = undefined;
+				await close();
 				controller.close();
 				return;
 			}
 			controller.enqueue(buffer.subarray(0, bytesRead));
 		},
-		async cancel() {
-			await handle?.close();
-			handle = undefined;
-		},
+		cancel: close,
 	});
+	return { stream, close };
+}
+
+/** {@link openFileChunks} for a reader that reads to the end or cancels. */
+export function fileChunks(path: string, chunkSize = FILE_CHUNK_BYTES): ReadableStream<Uint8Array> {
+	return openFileChunks(path, chunkSize).stream;
 }

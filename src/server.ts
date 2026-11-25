@@ -40,7 +40,7 @@ import type {
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createUploadState, fileChunks, type UploadEvent, type UploadState } from "./upload-state.js";
+import { createUploadState, fileChunks, openFileChunks, type UploadEvent, type UploadState } from "./upload-state.js";
 import { errorMessage, log } from "./log.js";
 
 // re-export for type / code safety
@@ -379,7 +379,13 @@ async function handleUploadPost(state: ServerState, request: Request): Promise<R
 				meta,
 			);
 		} else {
-			handlerResult = await (handlerEntry.fn as UploadStreamHandlerFn<unknown>)(fileChunks(session.tempFilePath), meta);
+			// The file closes when the handler settles, also when it threw without reading or still holds a reader.
+			const chunks = openFileChunks(session.tempFilePath);
+			try {
+				handlerResult = await (handlerEntry.fn as UploadStreamHandlerFn<unknown>)(chunks.stream, meta);
+			} finally {
+				await chunks.close();
+			}
 		}
 	} catch (handlerError: unknown) {
 		uploads.updateSession(uploadId, { status: "error" });

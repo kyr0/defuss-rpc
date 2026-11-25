@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.3.1
+
+### Fixed
+
+- A streaming upload handler that threw without reading its stream, after cancelling it, or while a reader still held it, left the upload's temp file open. Bun 1.4 then failed with "A FileHandle object was closed during garbage collection", which can end the process. The server now closes the file when the handler settles, and a stream cancelled while its file was opening closes it too.
+
 ## 4.3.0
 
 One fetch per context, and clients from a schema in hand.

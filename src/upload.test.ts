@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, readdirSync, readlinkSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRpcServer } from "./server.js";
@@ -15,6 +17,22 @@ interface PostOptions {
 	originalSize?: number;
 	encoding?: "gzip" | "deflate";
 	filename?: string;
+}
+
+/** Paths this process holds open: /proc on Linux, lsof on macOS. */
+function openPaths(): string[] {
+	if (existsSync("/proc/self/fd"))
+		return readdirSync("/proc/self/fd").map((fd) => {
+			try {
+				return readlinkSync("/proc/self/fd/" + fd);
+			} catch {
+				return "";
+			}
+		});
+	return execFileSync("lsof", ["-Fn", "-p", String(process.pid)], { encoding: "utf8" })
+		.split("\n")
+		.filter((line) => line.startsWith("n"))
+		.map((line) => line.slice(1));
 }
 
 function post(body: BodyInit | ReadableStream<Uint8Array> | null, options: PostOptions = {}) {
@@ -103,8 +121,31 @@ describe("uploads via rpc.fetch", () => {
 		rpc.addUploadHandler("failing", () => {
 			throw new Error("Intentional handler error");
 		});
+		rpc.addStreamingUploadHandler("unread", () => {
+			throw new Error("Refused without reading");
+		});
+		rpc.addStreamingUploadHandler("cancelled", async (stream) => {
+			await stream.cancel();
+			throw new Error("Refused after cancelling");
+		});
+		rpc.addStreamingUploadHandler("locked", async (stream) => {
+			await stream.getReader().read();
+			throw new Error("Refused with a reader still holding the stream");
+		});
 	});
 	afterEach(() => rpc.close());
+
+	it("a streaming handler that throws without reading, after cancelling or while a reader holds the stream leaves the temp file closed", async () => {
+		for (const handler of ["unread", "cancelled", "locked"]) {
+			const data = testBytes(600_000);
+			const uploadId = "u-" + handler;
+			const response = await post(data, { uploadId, originalSize: data.byteLength, handler });
+			expect((await frames(response))[1]).toMatchObject({ type: "error" });
+			// A pull that was opening the file when the handler returned settles within this wait.
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			expect(openPaths().filter((path) => path.includes(uploadId))).toEqual([]);
+		}
+	});
 
 	it("hands a buffered handler the bytes and answers received + result frames with SHA-256", async () => {
 		const data = testBytes(300_000);

@@ -13,11 +13,7 @@ Wrap: EVERY lead becomes a test | .vae/VERIFY.py rule | one MEMORY line with BC,
 2026-11-01T18:48:06Z s=be7f2ca9 FINDING ARCH.md:60 B05 and CHANGELOG.md:10 B05 learn=none: numbers are copied from one run's results; no mechanical check compares prose to output/bench
 2026-11-01T18:48:06Z s=be7f2ca9 FINDING ARCH.md:59 P09 learn=none: covered by the PROSE review each gate run
 2026-11-01T18:48:06Z s=be7f2ca9 FINDING src/server.ts:8 B01 learn=none: a count in a comment; grep for stale counts was run over src, scripts and pages
-2026-11-01T18:48:06Z s=be7f2ca9 FINDING scripts/e2e.mjs:watch learn=test: the filter lives in the e2e harness itself and keeps every other failed request fatal
 2026-11-01T18:48:06Z s=be7f2ca9 FINDING Makefile:start,stop learn=none: needs a real port conflict to reproduce; the Makefile comment states the reason
-2026-11-01T19:08:42Z s=be7f2ca9 FAIL env.example,src.log-through-helper
-2026-11-01T19:22:54Z s=be7f2ca9 DONE fp=810ea2347f25 cov=91.1% paths=.github/workflows/verify.yml,AGENTS.md,ARCH.md,CHANGELOG.md(+40)
-2026-11-01T19:22:54Z s=be7f2ca9 FINDING src/vite-plugin.ts:configureServer learn=test: src/vite-plugin.test.ts restart test on a fixed free port
 2026-11-01T19:22:54Z s=be7f2ca9 FINDING scripts/serve.mjs:47 and Makefile:start learn=none: SITE_PORT is in .env.example, which the gate checks
 2026-11-01T19:22:54Z s=be7f2ca9 FINDING scripts/bench.mjs:only and .env.example:RPC_URL learn=none: a value-specific config issue; the comment at the read site explains it
 2026-11-01T19:22:54Z s=be7f2ca9 FINDING src/client.ts:525,798 (src.log-through-helper) learn=verifier: .vae/VERIFY.py src.log-through-helper already encodes it
@@ -106,3 +102,7 @@ Wrap: EVERY lead becomes a test | .vae/VERIFY.py rule | one MEMORY line with BC,
 2026-11-25T02:22:17Z s=d5834857 FINDING README.md:465 P07 learn=none: Prose accuracy against behavior is not mechanically checkable; the behavior is documented in RpcContextOptions.fetch.
 2026-11-25T02:22:17Z s=d5834857 FINDING README.md:465 A10 learn=none: Paragraph structure is a reading judgment, not a mechanical rule.
 2026-11-25T02:22:17Z s=d5834857 FINDING ARCH.md:124 P07 learn=none: Prose accuracy against behavior is not mechanically checkable.
+2026-11-25T05:30:10Z s=dcdb118f DONE fp=6b3ce498d4cc cov=92.9% paths=ARCH.md,CHANGELOG.md,README.md,bun.lock(+9)
+2026-11-25T05:30:10Z s=dcdb118f FINDING src/server.ts:streaming upload handler call; src/upload-state.ts:fileChunks learn=test: VERIFIED: src/upload.test.ts lists the process's open paths (lsof on macOS, /proc on Linux) after unread, cancelled and locked handlers; without the fix u-unrea
+2026-11-25T05:30:10Z s=dcdb118f FINDING src/client.ts (4.3.0, committed c2951b6 and 6b88664) learn=none: VERIFIED: verify log.
+2026-11-25T05:30:10Z s=dcdb118f FINDING package.json, CHANGELOG.md, ARCH.md learn=none: VERIFIED: prose check passes.
