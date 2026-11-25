@@ -61,8 +61,12 @@ interface ClientState {
  */
 export type RpcFetch = (input: string, init: RequestInit) => Promise<Response>;
 
-/** One request of a state: through the context's fetch, else the runtime's, looked up per request. */
-const send = (state: ClientState, input: string, init: RequestInit) => (state.fetch ?? fetch)(input, init);
+/**
+ * One request of a state: through the context's fetch, else the runtime's, looked up per request. Async because a
+ * context's fetch may throw where the runtime's rejects; as a rejection, the upload still closes its progress stream.
+ * VERIFIED: src/client.browser.test.ts finds the stream open after such a throw when `send` is not async.
+ */
+const send = async (state: ClientState, input: string, init: RequestInit) => (state.fetch ?? fetch)(input, init);
 
 /** The state of the module functions. */
 const globalState: ClientState = { hooks: [], headers: null, schemas: new Map() };
@@ -87,7 +91,8 @@ export interface RpcClientOptions {
 	headers?: HeadersInit;
 	/**
 	 * A schema the caller already has, e.g. from {@link getSchema} or embedded at build time. The client is built from
-	 * it and sends no schema request, and the cache stays as it is.
+	 * it and sends no schema request, and the cache stays as it is. Why not seed the cache: a schema embedded at build
+	 * time can be older than the server's, and a later `getRpcClient()` without one should still ask the server.
 	 */
 	schema?: RpcApiSchema;
 }

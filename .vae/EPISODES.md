@@ -7,13 +7,8 @@ Session start injects the 3 newest open entries: LESSON, FINDING learn=none, FAI
 Wrap: EVERY lead becomes a test | .vae/VERIFY.py rule | one MEMORY line with BC, then delete; OR delete BC evidence. -->
 
 2026-11-01T15:21:58Z s=be7f2ca9 FINDING src/types.d.ts:ClientHookPhase learn=none: prose accuracy against behavior is not mechanically checkable; the behavior itself is pinned by tests
-2026-11-01T16:28:40Z s=be7f2ca9 FINDING src/node-bridge.ts:discardRest learn=test: src/express-server.test.ts 'answers and keeps serving after bodies it rejects unread or reads only in part' on every provider
-2026-11-01T16:28:40Z s=be7f2ca9 FINDING src/node-bridge.ts:bodyStream (removed) learn=test: covered by the sequential-upload and client upload suites on all providers
-2026-11-01T16:28:40Z s=be7f2ca9 FINDING src/providers/bunway.ts:listen learn=test: Bun run of src/client.test.ts ('break stops the server generator') and express-server suites on bunway; idle-stream probe 12 s complete on Bun
-2026-11-01T16:28:40Z s=be7f2ca9 FINDING src/express-server.test.ts:start EADDRINUSE learn=test: test asserts { code: 'EADDRINUSE' }; start() doc states the code contract
 2026-11-01T16:28:40Z s=be7f2ca9 FINDING scripts/bench.mjs:upload metric learn=none: bench output: upload rows now equal req/s x 1 MiB; no generic test applies to a measurement script
 2026-11-01T16:28:40Z s=be7f2ca9 FINDING README.md/ARCH.md/src/server.ts: Service Worker claim learn=none: removal of an unverified claim; no behavior changed
-2026-11-01T18:48:06Z s=be7f2ca9 DONE fp=47c25edf4cb2 cov=93.3% paths=.github/workflows/verify.yml,AGENTS.md,ARCH.md,CHANGELOG.md(+35)
 2026-11-01T18:48:06Z s=be7f2ca9 FINDING README.md:440 B05 (Runtimes table), docs/index.html Runtimes table learn=none: one table cell; no rule kind can check a prose claim against a test's provider choice
 2026-11-01T18:48:06Z s=be7f2ca9 FINDING ARCH.md:60 B05 and CHANGELOG.md:10 B05 learn=none: numbers are copied from one run's results; no mechanical check compares prose to output/bench
 2026-11-01T18:48:06Z s=be7f2ca9 FINDING ARCH.md:59 P09 learn=none: covered by the PROSE review each gate run
@@ -106,3 +101,8 @@ Wrap: EVERY lead becomes a test | .vae/VERIFY.py rule | one MEMORY line with BC,
 2026-11-25T02:13:25Z s=dcdb118f FINDING src/client.ts:clientOf schema option learn=test: VERIFIED: the schema test counts one schema request for getSchema plus a client.
 2026-11-25T02:13:25Z s=dcdb118f FINDING src/client.ts:RpcFetch learn=none: VERIFIED: make lint type-checks the example's wrapper.
 2026-11-25T02:13:25Z s=dcdb118f FINDING src/client.ts:download/downloadAsBlob learn=test: VERIFIED: e2e covers module downloads in three browsers and two runtimes.
+2026-11-25T02:22:17Z s=d5834857 DONE fp=7caa2ec1645b cov=92.6% paths=ARCH.md,CHANGELOG.md,README.md,docs/index.html(+5)
+2026-11-25T02:22:17Z s=d5834857 FINDING src/client.ts:send learn=test: src/client.browser.test.ts 'an upload closes its progress stream when the context's fetch throws instead of rejecting' uses the real browser EventSource and fai
+2026-11-25T02:22:17Z s=d5834857 FINDING README.md:465 P07 learn=none: Prose accuracy against behavior is not mechanically checkable; the behavior is documented in RpcContextOptions.fetch.
+2026-11-25T02:22:17Z s=d5834857 FINDING README.md:465 A10 learn=none: Paragraph structure is a reading judgment, not a mechanical rule.
+2026-11-25T02:22:17Z s=d5834857 FINDING ARCH.md:124 P07 learn=none: Prose accuracy against behavior is not mechanically checkable.

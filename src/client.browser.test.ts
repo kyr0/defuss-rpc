@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, inject, it } from "vitest";
 import {
 	addHook,
 	clearHooks,
+	createRpcContext,
 	download,
 	downloadAsBlob,
 	getRpcClient,
@@ -91,6 +92,33 @@ describe.for(Object.entries(inject("rpcUrls")))("defuss-rpc client in the browse
 		const { blob, result } = await downloadAsBlob("stored", url, { downloadId: uploadId });
 		expect(await sha256Hex(await blob.arrayBuffer())).toBe(await sha256Hex(data));
 		expect(result).toMatchObject({ downloadId: uploadId, bytesDownloaded: data.byteLength, filename: "Übersicht 2026.bin" });
+	});
+
+	it("an upload closes its progress stream when the context's fetch throws instead of rejecting", async () => {
+		const NativeEventSource = globalThis.EventSource;
+		const opened: EventSource[] = [];
+		globalThis.EventSource = class extends NativeEventSource {
+			constructor(...args: ConstructorParameters<typeof EventSource>) {
+				super(...args);
+				opened.push(this);
+			}
+		};
+		try {
+			const ctx = createRpcContext({
+				baseUrl: url,
+				fetch: () => {
+					throw new Error("refused");
+				},
+			});
+			await expect(async () => {
+				for await (const _ of ctx.upload("store", bytes(10))) {
+					// consume
+				}
+			}).rejects.toThrow("refused");
+			expect(opened.map((source) => source.readyState)).toEqual([NativeEventSource.CLOSED]);
+		} finally {
+			globalThis.EventSource = NativeEventSource;
+		}
 	});
 
 	it("surfaces handler errors, unknown handlers and client guards", async () => {
