@@ -462,16 +462,22 @@ A client guard must return `true`: any other value (also `undefined`) aborts the
 
 `setHeaders()` applies to the whole process: every schema request, call and upload sends its headers. For one client only, pass them to `getRpcClient({ baseUrl, headers })`. That client's schema request and calls send them after the global set, so a name in both takes the client's value, whatever its case. A process that calls two servers with two credentials gives each client its own headers. VERIFIED by `src/client.test.ts`: a client reaches a listener that answers 401 to a schema request without its token. `setHeaders()` accepts a `Headers` instance, pairs or a plain object. The upload progress stream is an `EventSource`, which sends no custom headers; behind such a host, pass `progress: false`.
 
-A library that calls its own server should share none of this with the application. `createRpcContext({ baseUrl, headers })` returns the client functions, from `getRpcClient()` to `download()`, with hooks, headers and a schema cache of their own. The module functions are one more context, for the whole process. Headers apply in a context as they do in the module functions: to schema requests, calls and uploads, not to downloads. VERIFIED by `src/client.test.ts`: an application's guard that blocks every call leaves a context's calls and uploads alone, and a context's headers never reach the module functions.
+A library that calls its own server should share none of this with the application. `createRpcContext({ baseUrl, headers })` returns the client functions, from `getRpcClient()` to `download()`, with hooks, headers and a schema cache of their own. The module functions are one more context, for the whole process. Headers apply in a context as they do in the module functions: to schema requests, calls and uploads, not to downloads. A context's `fetch` option sends every request it makes, from the schema request to downloads, so one function sets its redirect policy, a timeout or a proxy. `getRpcClient({ schema })` builds a client from a schema you already have, from `getSchema()` or embedded at build time, and sends no schema request. VERIFIED by `src/client.test.ts`: a context's fetch saw its schema request, call, upload resume check, upload and download, and a fetch that refuses redirects kept a redirected schema request from the other address. VERIFIED by `src/client.test.ts`: an application's guard that blocks every call leaves a context's calls and uploads alone, and a context's headers never reach the module functions.
 
 <!-- example: examples/client.ts#client-context -->
 ```ts
 // hooks, headers and a schema cache of its own:
 // the hook and the header above do not reach it
-const own = createRpcContext({ baseUrl });
+const own = createRpcContext({
+  baseUrl,
+  // sends every request of the context; this one refuses redirects
+  fetch: (input, init) => fetch(input, { ...init, redirect: "error" }),
+});
 let ownAnswers = 0;
 own.addHook({ phase: "result", fn: () => void ownAnswers++ });
-const isolated = await own.getRpcClient<RpcApi>();
+// a schema in hand saves the client its own schema request
+const schema = await own.getSchema();
+const isolated = await own.getRpcClient<RpcApi>({ schema });
 await isolated.MathApi.multiply(6, 7);
 console.log(answered, ownAnswers); // 1 1
 ```

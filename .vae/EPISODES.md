@@ -6,12 +6,7 @@ Agents append `<UTC ISO> s=<session> LESSON <VAE-DIALECT>` only for a falsified 
 Session start injects the 3 newest open entries: LESSON, FINDING learn=none, FAIL without a later DONE.
 Wrap: EVERY lead becomes a test | .vae/VERIFY.py rule | one MEMORY line with BC, then delete; OR delete BC evidence. -->
 
-2026-11-01T15:21:58Z s=be7f2ca9 DONE fp=76a1751af892 cov=95.6% paths=docs/assets/site.js
 2026-11-01T15:21:58Z s=be7f2ca9 FINDING src/types.d.ts:ClientHookPhase learn=none: prose accuracy against behavior is not mechanically checkable; the behavior itself is pinned by tests
-2026-11-01T15:21:58Z s=be7f2ca9 FINDING docs/assets/site.js learn=verifier: already caught by scripts/docs.ts --check in make lint
-2026-11-01T16:15:07Z s=be7f2ca9 FAIL prose,env.example,lint,tests.e2e.1
-2026-11-01T16:28:40Z s=be7f2ca9 DONE fp=fd41069bd6ce cov=93.7% paths=AGENTS.md,ARCH.md,CHANGELOG.md,Makefile(+39)
-2026-11-01T16:28:40Z s=be7f2ca9 FINDING src/providers/defuss-express.ts:use learn=test: src/express-server.test.ts 'serves sequential 1 MiB uploads on one keep-alive connection' fails without the read-ahead (mutation run) and passes with it
 2026-11-01T16:28:40Z s=be7f2ca9 FINDING src/node-bridge.ts:discardRest learn=test: src/express-server.test.ts 'answers and keeps serving after bodies it rejects unread or reads only in part' on every provider
 2026-11-01T16:28:40Z s=be7f2ca9 FINDING src/node-bridge.ts:bodyStream (removed) learn=test: covered by the sequential-upload and client upload suites on all providers
 2026-11-01T16:28:40Z s=be7f2ca9 FINDING src/providers/bunway.ts:listen learn=test: Bun run of src/client.test.ts ('break stops the server generator') and express-server suites on bunway; idle-stream probe 12 s complete on Bun
@@ -106,3 +101,8 @@ Wrap: EVERY lead becomes a test | .vae/VERIFY.py rule | one MEMORY line with BC,
 2026-11-25T00:45:06Z s=dcdb118f FINDING src/client.ts:fetchSchema learn=test: VERIFIED: covered by 'a failed schema request carries status and body'.
 2026-11-25T00:45:06Z s=dcdb118f FINDING src/client.ts:getSchema/getRpcClient/upload/uploadComplete signatures learn=none: VERIFIED: type check and the unchanged tests prove the public signatures.
 2026-11-25T00:45:06Z s=dcdb118f FINDING examples/client.ts#client-context and README.md:467 learn=test: VERIFIED: e2e compares every printed line with its comment.
+2026-11-25T02:13:25Z s=dcdb118f DONE fp=4fa97d92ef0c cov=92.4% paths=ARCH.md,CHANGELOG.md,README.md,bun.lock(+5)
+2026-11-25T02:13:25Z s=dcdb118f FINDING src/client.ts:send and RpcContextOptions.fetch learn=test: VERIFIED: src/client.test.ts records all five requests through a context fetch and shows a fetch refusing redirects keeps a redirected schema request from the o
+2026-11-25T02:13:25Z s=dcdb118f FINDING src/client.ts:clientOf schema option learn=test: VERIFIED: the schema test counts one schema request for getSchema plus a client.
+2026-11-25T02:13:25Z s=dcdb118f FINDING src/client.ts:RpcFetch learn=none: VERIFIED: make lint type-checks the example's wrapper.
+2026-11-25T02:13:25Z s=dcdb118f FINDING src/client.ts:download/downloadAsBlob learn=test: VERIFIED: e2e covers module downloads in three browsers and two runtimes.

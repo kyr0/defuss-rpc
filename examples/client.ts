@@ -78,10 +78,16 @@ console.log(answered); // 1
 // #region client-context
 // hooks, headers and a schema cache of its own:
 // the hook and the header above do not reach it
-const own = createRpcContext({ baseUrl });
+const own = createRpcContext({
+	baseUrl,
+	// sends every request of the context; this one refuses redirects
+	fetch: (input, init) => fetch(input, { ...init, redirect: "error" }),
+});
 let ownAnswers = 0;
 own.addHook({ phase: "result", fn: () => void ownAnswers++ });
-const isolated = await own.getRpcClient<RpcApi>();
+// a schema in hand saves the client its own schema request
+const schema = await own.getSchema();
+const isolated = await own.getRpcClient<RpcApi>({ schema });
 await isolated.MathApi.multiply(6, 7);
 console.log(answered, ownAnswers); // 1 1
 // #endregion client-context

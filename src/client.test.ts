@@ -390,3 +390,65 @@ describe("client contexts", () => {
 		}
 	});
 });
+
+describe("a context's fetch and a given schema", () => {
+	type Guarded = { Math: { add(a: number, b: number): Promise<number>; token(): Promise<string> } };
+
+	it("the context's fetch sends every request: schema, calls, uploads with their resume check, and downloads", async () => {
+		const a = await guardedListener("a");
+		try {
+			const sent: string[] = [];
+			const ctx = createRpcContext({
+				baseUrl: a.url,
+				headers: { Authorization: "Bearer a" },
+				fetch: (input, init) => {
+					sent.push(`${init.method ?? "GET"} ${new URL(input).pathname}`);
+					return fetch(input, init);
+				},
+			});
+			expect(await (await ctx.getRpcClient<Guarded>()).Math.add(2, 3)).toBe(5);
+			await ctx.uploadComplete("keep", new Uint8Array(10), { uploadId: "resume-check" });
+			await ctx.download("bytes", undefined, { headers: { Authorization: "Bearer a" } });
+			expect(sent).toEqual([
+				"POST /rpc/schema",
+				"POST /rpc",
+				"HEAD /rpc/upload/resume-check",
+				"POST /rpc/upload",
+				"GET /rpc/download",
+			]);
+		} finally {
+			await a.stop();
+		}
+	});
+
+	it("a fetch that refuses redirects keeps a redirected schema request from the other address", async () => {
+		const a = await guardedListener("a");
+		const redirect: Server = createServer((_req, res) => void res.writeHead(307, { Location: `${a.url}/rpc/schema` }).end());
+		await new Promise<void>((resolve) => redirect.listen(0, "127.0.0.1", resolve));
+		try {
+			const url = `http://127.0.0.1:${(redirect.address() as AddressInfo).port}`;
+			const ctx = createRpcContext({ baseUrl: url, fetch: (input, init) => fetch(input, { ...init, redirect: "error" }) });
+			await expect(ctx.getSchema()).rejects.toThrow();
+			expect(a.seen).toEqual([]);
+			// Without the policy the same request follows the redirect.
+			await expect(createRpcContext({ baseUrl: url }).getSchema()).rejects.toMatchObject({ status: 401 });
+			expect(a.seen).toEqual(["/rpc/schema -"]);
+		} finally {
+			await new Promise((resolve) => redirect.close(resolve));
+			await a.stop();
+		}
+	});
+
+	it("getRpcClient({ schema }) builds the client from a schema the caller has and sends no schema request", async () => {
+		const a = await guardedListener("a");
+		try {
+			const ctx = createRpcContext({ baseUrl: a.url, headers: { Authorization: "Bearer a" } });
+			const schema = await ctx.getSchema();
+			const rpc = await ctx.getRpcClient<Guarded>({ schema });
+			expect(await rpc.Math.token()).toBe("a");
+			expect(a.seen.filter((line) => line.startsWith("/rpc/schema"))).toHaveLength(1);
+		} finally {
+			await a.stop();
+		}
+	});
+});

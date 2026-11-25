@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.3.0
+
+One fetch per context, and clients from a schema in hand.
+
+### New
+
+- `createRpcContext({ fetch })`: the function sends every request of the context, the schema request, calls, uploads with their resume check and downloads. Use it for a redirect policy, a timeout or a proxy. Client hooks run only for calls and uploads, so a hook could not set a policy for the schema request. The upload progress `EventSource` does not use it.
+- `getRpcClient({ schema })` builds the client from a schema the caller already has, from `getSchema()` or embedded at build time, and sends no schema request.
+- The type `RpcFetch` names the function `fetch` takes. Bun's `typeof fetch` also carries `preconnect`, which a plain wrapper does not have.
+
 ## 4.2.0
 
 Client contexts: the client gets state of its own, as the server did in 4.0.0.

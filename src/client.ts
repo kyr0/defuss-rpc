@@ -52,7 +52,17 @@ interface ClientState {
 	headers: HeadersInit | null;
 	schemas: Map<string, Promise<RpcApiSchema>>;
 	baseUrl?: string;
+	fetch?: RpcFetch;
 }
+
+/**
+ * The fetch a context sends its requests with. Why a function of its own rather than `typeof fetch`: Bun's `fetch`
+ * type carries `preconnect`, which a plain wrapper does not have.
+ */
+export type RpcFetch = (input: string, init: RequestInit) => Promise<Response>;
+
+/** One request of a state: through the context's fetch, else the runtime's, looked up per request. */
+const send = (state: ClientState, input: string, init: RequestInit) => (state.fetch ?? fetch)(input, init);
 
 /** The state of the module functions. */
 const globalState: ClientState = { hooks: [], headers: null, schemas: new Map() };
@@ -75,6 +85,11 @@ export interface RpcClientOptions {
 	 * that calls two servers with two credentials cannot share one global set.
 	 */
 	headers?: HeadersInit;
+	/**
+	 * A schema the caller already has, e.g. from {@link getSchema} or embedded at build time. The client is built from
+	 * it and sends no schema request, and the cache stays as it is.
+	 */
+	schema?: RpcApiSchema;
 }
 
 /**
@@ -98,7 +113,7 @@ export function getSchema(baseUrl?: string, headers?: HeadersInit): Promise<RpcA
  * a missing credential (401) from a missing endpoint (404) or an unavailable server (503).
  */
 async function fetchSchema(state: ClientState, baseUrl: string | undefined, headers?: HeadersInit): Promise<RpcApiSchema> {
-	const response = await fetch(`${endpointOf(state, baseUrl)}${RPC_SCHEMA_PATH}`, {
+	const response = await send(state, `${endpointOf(state, baseUrl)}${RPC_SCHEMA_PATH}`, {
 		method: "POST",
 		headers: mergeHeaders(state.headers, headers),
 	});
@@ -209,7 +224,7 @@ async function sendCall(
 		body: DSON.stringify({ className: namespaceName, methodName, args }),
 	};
 	await runClientGuards(state.hooks, namespaceName, methodName, args, request, `RPC call to ${namespaceName}.${methodName}`);
-	const response = await fetch(`${baseUrl}${RPC_PATH}`, request);
+	const response = await send(state, `${baseUrl}${RPC_PATH}`, request);
 	await runClientHooks(state.hooks, "response", namespaceName, methodName, args, request, response);
 	if (!response.ok) {
 		throw Object.assign(new Error(`RPC call failed: ${response.status} ${response.statusText}`), {
@@ -360,6 +375,7 @@ export function getRpcClient<T extends Record<string, unknown>>(options?: RpcCli
 async function clientOf<T>(state: ClientState, options?: RpcClientOptions): Promise<T> {
 	const baseUrl = endpointOf(state, options?.baseUrl);
 	const headers = mergeHeaders(options?.headers);
+	if (options?.schema) return buildClient(state, options.schema, baseUrl, headers) as T;
 	let schema = state.schemas.get(baseUrl);
 	if (!schema) {
 		schema = fetchSchema(state, baseUrl, headers);
@@ -643,7 +659,8 @@ async function* uploadOf<T>(
 	let offset = 0;
 	if (options.uploadId) {
 		try {
-			const headRes = await fetch(
+			const headRes = await send(
+				state,
 				`${baseUrl}${RPC_UPLOAD_PATH}/${uploadId}`,
 				{ method: "HEAD", headers: mergeHeaders(state.headers, options.headers), signal: options.signal },
 			);
@@ -769,7 +786,7 @@ async function* uploadOf<T>(
 	let fetchResponse: Response | undefined;
 	let fetchError: Error | undefined;
 
-	const fetchPromise = fetch(`${baseUrl}${RPC_UPLOAD_PATH}`, reqInit)
+	const fetchPromise = send(state, `${baseUrl}${RPC_UPLOAD_PATH}`, reqInit)
 		.then((res) => {
 			fetchResponse = res;
 		})
@@ -974,9 +991,9 @@ function downloadUrl(handlerName: string, baseUrl: string, downloadId: string): 
 }
 
 /** Fetches a download and throws with the server's error body for non-2xx answers. */
-async function fetchDownload(handlerName: string, baseUrl: string, options: DownloadOptions) {
+async function fetchDownload(state: ClientState, handlerName: string, baseUrl: string, options: DownloadOptions) {
 	const downloadId = options.downloadId || crypto.randomUUID();
-	const response = await fetch(downloadUrl(handlerName, baseUrl, downloadId), {
+	const response = await send(state, downloadUrl(handlerName, baseUrl, downloadId), {
 		method: "GET",
 		headers: options.headers,
 		signal: options.signal,
@@ -1023,12 +1040,21 @@ export function parseContentDisposition(header: string | null): string | null {
  * const { data, filename, sha256 } = await download("report", undefined, { downloadId: "42" });
  * ```
  */
-export async function download<T = unknown>(
+export function download<T = unknown>(
 	handlerName: string,
 	baseUrl: string = endpointState.endpoint,
 	options: DownloadOptions = {},
 ): Promise<DownloadResult<T>> {
-	const { downloadId, response } = await fetchDownload(handlerName, baseUrl, options);
+	return downloadOf<T>(globalState, handlerName, baseUrl, options);
+}
+
+async function downloadOf<T>(
+	state: ClientState,
+	handlerName: string,
+	baseUrl: string,
+	options: DownloadOptions,
+): Promise<DownloadResult<T>> {
+	const { downloadId, response } = await fetchDownload(state, handlerName, baseUrl, options);
 	const data = new Uint8Array(await response.arrayBuffer());
 	return {
 		data,
@@ -1049,12 +1075,21 @@ export async function download<T = unknown>(
  * Note for cross-origin servers: the browser exposes `Content-Disposition` and `X-File-Sha256` only when the server
  * lists them in `Access-Control-Expose-Headers` (`ExpressRpcServer` does).
  */
-export async function downloadAsBlob(
+export function downloadAsBlob(
 	handlerName: string,
 	baseUrl: string = endpointState.endpoint,
 	options: DownloadOptions = {},
 ): Promise<{ blob: Blob; result: DownloadResult }> {
-	const { downloadId, response } = await fetchDownload(handlerName, baseUrl, options);
+	return downloadAsBlobOf(globalState, handlerName, baseUrl, options);
+}
+
+async function downloadAsBlobOf(
+	state: ClientState,
+	handlerName: string,
+	baseUrl: string,
+	options: DownloadOptions,
+): Promise<{ blob: Blob; result: DownloadResult }> {
+	const { downloadId, response } = await fetchDownload(state, handlerName, baseUrl, options);
 	const blob = await response.blob();
 	return {
 		blob,
@@ -1079,6 +1114,12 @@ export interface RpcContextOptions {
 	baseUrl?: string;
 	/** The context's first {@link RpcClientContext.setHeaders} set, e.g. its credential. */
 	headers?: HeadersInit;
+	/**
+	 * Sends every request of the context: schema requests, calls, uploads with their resume check, and downloads, e.g.
+	 * to refuse redirects, set a timeout or route through a proxy. The upload progress stream is an `EventSource` and
+	 * does not use it. Defaults to the runtime's `fetch`.
+	 */
+	fetch?: RpcFetch;
 }
 
 /**
@@ -1119,7 +1160,13 @@ export interface RpcClientContext {
  * ```
  */
 export function createRpcContext(options: RpcContextOptions = {}): RpcClientContext {
-	const state: ClientState = { hooks: [], headers: options.headers ?? null, schemas: new Map(), baseUrl: options.baseUrl };
+	const state: ClientState = {
+		hooks: [],
+		headers: options.headers ?? null,
+		schemas: new Map(),
+		baseUrl: options.baseUrl,
+		fetch: options.fetch,
+	};
 	return {
 		getRpcClient: (clientOptions) => clientOf(state, clientOptions),
 		getSchema: (baseUrl, headers) => fetchSchema(state, baseUrl, headers),
@@ -1129,8 +1176,9 @@ export function createRpcContext(options: RpcContextOptions = {}): RpcClientCont
 		clearSchemaCache: () => state.schemas.clear(),
 		upload: (handlerName, data, uploadOptions = {}) => uploadOf(state, handlerName, data, uploadOptions),
 		uploadComplete: (handlerName, data, uploadOptions = {}) => uploadCompleteOf(state, handlerName, data, uploadOptions),
-		download: (handlerName, baseUrl, downloadOptions) => download(handlerName, endpointOf(state, baseUrl), downloadOptions),
-		downloadAsBlob: (handlerName, baseUrl, downloadOptions) =>
-			downloadAsBlob(handlerName, endpointOf(state, baseUrl), downloadOptions),
+		download: (handlerName, baseUrl, downloadOptions = {}) =>
+			downloadOf(state, handlerName, endpointOf(state, baseUrl), downloadOptions),
+		downloadAsBlob: (handlerName, baseUrl, downloadOptions = {}) =>
+			downloadAsBlobOf(state, handlerName, endpointOf(state, baseUrl), downloadOptions),
 	};
 }
