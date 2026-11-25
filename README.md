@@ -656,7 +656,7 @@ sequenceDiagram
   Note over App,API: break instead: the client cancels the body, the server calls generator.return(), finally runs
 ```
 
-An upload sends raw bytes; the server writes them to a temp file while it hashes them, then runs the handler. `HEAD` happens only when an `uploadId` resumes an upload.
+An upload sends raw bytes; the server writes them to a temp file while it hashes them, then runs the handler. `HEAD` happens only when the upload has an `uploadId`: the server answers the offset it holds, or `0` with `X-Upload-Status: none` when it holds nothing, so a new upload logs no failed request.
 
 ```mermaid
 sequenceDiagram

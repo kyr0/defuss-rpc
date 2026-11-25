@@ -160,7 +160,7 @@ export interface RpcServer {
 	 * | any    | `…/rpc/schema`                | JSON schema of all registered namespaces                    |
 	 * | POST   | `…/rpc`                       | DSON result, or NDJSON frames for generator methods         |
 	 * | POST   | `…/rpc/upload`                | NDJSON `received` + `result`/`error` frames                 |
-	 * | HEAD   | `…/rpc/upload/{uploadId}`     | `X-Upload-Offset` etc. for resuming                         |
+	 * | HEAD   | `…/rpc/upload/{uploadId}`     | `X-Upload-Offset` etc. for resuming; offset 0 and status `none` when nothing is stored |
 	 * | GET    | `…/rpc/upload/progress/{id}`  | Server-Sent Events with upload progress                     |
 	 * | GET    | `…/rpc/download?handler=&downloadId=` | the file, with metadata headers                     |
 	 *

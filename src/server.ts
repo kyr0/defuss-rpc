@@ -755,7 +755,9 @@ async function dispatch(state: ServerState, request: Request): Promise<Response>
 		const start = pathname.lastIndexOf(`${RPC_UPLOAD_PATH}/`) + RPC_UPLOAD_PATH.length + 1;
 		const uploadId = sanitizeUploadId(pathname.slice(start));
 		const session = state.uploads.getSession(uploadId);
-		if (!session) return new Response(null, { status: 404 });
+		// Nothing stored for this ID is an answer, not an error: 200 with offset 0 and status "none". Why not 404: the
+		// client asks this before every upload with an `uploadId`, and browsers log each 404 as a failed request.
+		if (!session) return new Response(null, { status: 200, headers: { "X-Upload-Offset": "0", "X-Upload-Status": "none" } });
 		return new Response(null, {
 			status: 200,
 			headers: {

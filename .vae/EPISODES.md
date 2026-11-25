@@ -16,15 +16,9 @@ Wrap: EVERY lead becomes a test | .vae/VERIFY.py rule | one MEMORY line with BC,
 2026-11-01T18:48:06Z s=be7f2ca9 FINDING Makefile:start,stop learn=none: needs a real port conflict to reproduce; the Makefile comment states the reason
 2026-11-01T19:22:54Z s=be7f2ca9 FINDING scripts/serve.mjs:47 and Makefile:start learn=none: SITE_PORT is in .env.example, which the gate checks
 2026-11-01T19:22:54Z s=be7f2ca9 FINDING scripts/bench.mjs:only and .env.example:RPC_URL learn=none: a value-specific config issue; the comment at the read site explains it
-2026-11-01T19:22:54Z s=be7f2ca9 FINDING src/client.ts:525,798 (src.log-through-helper) learn=verifier: .vae/VERIFY.py src.log-through-helper already encodes it
 2026-11-01T19:22:54Z s=be7f2ca9 FINDING src/providers/bun.ts:4 B01/S learn=none: one-off edit error
 2026-11-01T19:22:54Z s=be7f2ca9 FINDING README.md:Benchmark B03/B09 learn=none: the bench script records load average in every report
 2026-11-01T19:22:54Z s=be7f2ca9 FINDING src/astro-integration.ts:@example learn=none: doc example; the e2e runs the real config
-2026-11-01T19:22:54Z s=be7f2ca9 FINDING examples/client.ts:3 B01 learn=verifier: the docs gate requires the prefix
-2026-11-01T19:57:41Z s=be7f2ca9 FAIL prose,package
-2026-11-01T20:08:44Z s=be7f2ca9 FAIL tests.e2e.1
-2026-11-01T20:13:37Z s=be7f2ca9 DONE fp=09a7ab6b6a6e cov=90.9% paths=.github/workflows/verify.yml,AGENTS.md,ARCH.md,CHANGELOG.md(+62)
-2026-11-01T20:13:37Z s=be7f2ca9 FINDING scripts/e2e.mjs:copy filter learn=test: the e2e itself asserts the Astro page result, so a dropped page fails it
 2026-11-01T20:13:37Z s=be7f2ca9 FINDING scripts/docs.ts:12 learn=verifier: make lint (oxlint) catches it
 2026-11-01T20:13:37Z s=be7f2ca9 FINDING integrations/astro/ARCH.md:20 B01 learn=verifier: the gate's prose check enforces it
 2026-11-01T20:13:37Z s=be7f2ca9 FINDING integrations/*/package.json:devDependencies learn=verifier: the gate's package check enforces it
@@ -106,3 +100,9 @@ Wrap: EVERY lead becomes a test | .vae/VERIFY.py rule | one MEMORY line with BC,
 2026-11-25T05:30:10Z s=dcdb118f FINDING src/server.ts:streaming upload handler call; src/upload-state.ts:fileChunks learn=test: VERIFIED: src/upload.test.ts lists the process's open paths (lsof on macOS, /proc on Linux) after unread, cancelled and locked handlers; without the fix u-unrea
 2026-11-25T05:30:10Z s=dcdb118f FINDING src/client.ts (4.3.0, committed c2951b6 and 6b88664) learn=none: VERIFIED: verify log.
 2026-11-25T05:30:10Z s=dcdb118f FINDING package.json, CHANGELOG.md, ARCH.md learn=none: VERIFIED: prose check passes.
+2026-11-25T06:53:07Z s=dcdb118f DONE fp=71388a3faff6 cov=92.9% paths=ARCH.md,CHANGELOG.md,README.md,bun.lock(+11)
+2026-11-25T06:53:07Z s=dcdb118f FINDING src/server.ts:HEAD /rpc/upload/{id} learn=test: VERIFIED: upload.test.ts and express-server.test.ts failed with 404 before and pass; make verify exit 0 (all vitest projects and e2e).
+2026-11-25T06:53:07Z s=dcdb118f FINDING src/client.ts resume comment learn=none: VERIFIED: comment only.
+2026-11-25T06:53:07Z s=dcdb118f FINDING 4.3.1 (committed bab7008): src/upload-state.ts, src/server.ts learn=test: VERIFIED: the regression test failed without the fix and passes.
+2026-11-25T06:53:07Z s=dcdb118f FINDING 4.3.0 (committed): src/client.ts, client tests, examples/client.ts, ARCH.md learn=test: VERIFIED: client.test.ts and client.browser.test.ts pass; the backplane uses it with redirect: error.
+2026-11-25T06:53:07Z s=dcdb118f FINDING package.json 4.4.0 + CHANGELOG + docs/index.html learn=none: VERIFIED: grep finds v4.4.0 three times in docs/index.html.

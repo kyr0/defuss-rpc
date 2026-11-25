@@ -239,7 +239,17 @@ describe("uploads via rpc.fetch", () => {
 	it("answers 404 for a resume without a session and creates none", async () => {
 		const response = await post(testBytes(5), { uploadId: "u-ghost", offset: 100 });
 		expect(response.status).toBe(404);
-		expect((await head("u-ghost")).status).toBe(404);
+		const status = await head("u-ghost");
+		expect(status.headers.get("x-upload-status")).toBe("none");
+	});
+
+	it("answers HEAD for an ID with nothing stored with 200, offset 0 and status none", async () => {
+		// Not 404: browsers log every 404 as a failed request, and each fresh resumable upload asks this first.
+		const status = await head("u-fresh");
+		expect(status.status).toBe(200);
+		expect(status.headers.get("x-upload-offset")).toBe("0");
+		expect(status.headers.get("x-upload-status")).toBe("none");
+		expect(status.headers.get("x-upload-handler")).toBeNull();
 	});
 
 	it("sanitizes upload IDs into file names inside the upload directory", async () => {

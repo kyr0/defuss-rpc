@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.4.0
+
+A fresh resumable upload no longer shows up as a failed request.
+
+### Changed
+
+- `HEAD …/rpc/upload/{uploadId}` for an ID with nothing stored answers 200 with `X-Upload-Offset: 0` and `X-Upload-Status: none` instead of 404. The client sends this request before every upload with an `uploadId`, and browsers logged each 404 as a failed request in the console. Clients before 4.4.0 read both answers as "start at 0"; code that tested the status for 404 reads `X-Upload-Status` instead.
+
+4.4.0 also contains the fix of 4.3.1.
+
 ## 4.3.1
 
 ### Fixed

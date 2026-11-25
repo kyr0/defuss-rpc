@@ -305,7 +305,8 @@ describe.for(PROVIDERS)("ExpressRpcServer on $name", (provider: RpcServerProvide
 		});
 		expect(upload.status).toBe(201);
 		expect((await upload.text()).split("\n").filter(Boolean).map((l) => DSON.parse(l))[1]).toEqual({ type: "result", value: 4 });
-		expect((await fetch(`${url}/rpc/upload/x1`, { method: "HEAD" })).status).toBe(404);
+		const status = await fetch(`${url}/rpc/upload/x1`, { method: "HEAD" });
+		expect([status.status, status.headers.get("x-upload-offset"), status.headers.get("x-upload-status")]).toEqual([200, "0", "none"]);
 		const progress = await fetch(`${url}/rpc/upload/progress/x2`);
 		expect(progress.headers.get("content-type")).toBe("text/event-stream");
 		await progress.body?.cancel();

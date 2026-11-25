@@ -675,7 +675,7 @@ async function* uploadOf<T>(
 					10,
 				);
 			}
-			// 404 => no session to resume, start fresh (offset = 0)
+			// No session: the server answers offset 0 (status "none"); a server before 4.4.0 answers 404. Both start at 0.
 		} catch {
 			// Network error on HEAD - start fresh
 		}
