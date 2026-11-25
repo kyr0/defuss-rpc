@@ -459,7 +459,7 @@ console.log(answered); // 1
 
 A client guard must return `true`: any other value (also `undefined`) aborts the call before it is sent. `"response"` hooks see the raw `Response`, `"result"` hooks the decoded value. `clearHooks()` removes all hooks and headers.
 
-`setHeaders()` applies to the whole process: every schema request, call and upload sends its headers. For one client only, pass them to `getRpcClient({ baseUrl, headers })`. That client's schema request and calls send them after the global set, so a name in both takes the client's value. A process that calls two servers with two credentials gives each client its own headers. VERIFIED by `src/client.test.ts`: a client reaches a listener that answers 401 to a schema request without its token. `setHeaders()` accepts a `Headers` instance, pairs or a plain object.
+`setHeaders()` applies to the whole process: every schema request, call and upload sends its headers. For one client only, pass them to `getRpcClient({ baseUrl, headers })`. That client's schema request and calls send them after the global set, so a name in both takes the client's value, whatever its case. A process that calls two servers with two credentials gives each client its own headers. VERIFIED by `src/client.test.ts`: a client reaches a listener that answers 401 to a schema request without its token. `setHeaders()` accepts a `Headers` instance, pairs or a plain object. The upload progress stream is an `EventSource`, which sends no custom headers; behind such a host, pass `progress: false`.
 
 ## Vite and Astro
 

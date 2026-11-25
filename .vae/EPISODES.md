@@ -96,3 +96,8 @@ Wrap: EVERY lead becomes a test | .vae/VERIFY.py rule | one MEMORY line with BC,
 2026-11-24T22:39:12Z s=dcdb118f FINDING src/client.ts:sendCall and upload (customHeaders spread) learn=test: VERIFIED: the setHeaders test passes a Headers instance and pairs against the guarded listener.
 2026-11-24T22:39:12Z s=dcdb118f FINDING src/client.ts:RpcClientOptions.headers learn=test: VERIFIED: covered by the two-listener test.
 2026-11-24T22:39:12Z s=dcdb118f FINDING src/client.test.ts:299 learn=none: VERIFIED: tsc in make lint catches it.
+2026-11-24T23:45:16Z s=472a9d74 FAIL tests.e2e.1
+2026-11-24T23:54:28Z s=472a9d74 DONE fp=46c2cc193a64 cov=92.4% paths=AGENTS.md,ARCH.md,CHANGELOG.md,README.md(+48)
+2026-11-24T23:54:28Z s=472a9d74 FINDING src/client.ts:mergeHeaders (was record) learn=test: src/client.test.ts 'a client's headers win' failed (401) before the fix, passes after
+2026-11-24T23:54:28Z s=472a9d74 FINDING src/client.ts:upload resume HEAD learn=test: the same test asserts the HEAD arrives with 'Bearer a'; it failed with '/rpc/upload/u1 -' before the fix
+2026-11-24T23:54:28Z s=472a9d74 FINDING README.md:headers paragraph learn=none: platform limit of EventSource, no code defect to test

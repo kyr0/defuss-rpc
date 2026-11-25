@@ -303,6 +303,15 @@ describe("headers for a server that guards its schema", () => {
 			clearSchemaCache();
 			const rpc = await getRpcClient<Guarded>({ baseUrl: a.url, headers: { Authorization: "Bearer a" } });
 			expect(await rpc.Math.token()).toBe("a");
+			// A Headers instance names its headers in lower case; the client's Authorization must still replace it.
+			setHeaders(new Headers({ Authorization: "Bearer wrong" }));
+			clearSchemaCache();
+			const cased = await getRpcClient<Guarded>({ baseUrl: a.url, headers: { Authorization: "Bearer a" } });
+			expect(await cased.Math.token()).toBe("a");
+			const headers = { Authorization: "Bearer a" };
+			const options = { baseUrl: a.url, progress: false, headers, uploadId: "u1" };
+			await expect(uploadComplete("none", new Uint8Array([1]), options)).rejects.toThrow();
+			expect(a.seen.slice(-2)).toEqual(["/rpc/upload/u1 Bearer a", "/rpc/upload Bearer a"]);
 		} finally {
 			await a.stop();
 		}

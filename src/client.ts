@@ -72,7 +72,7 @@ export interface RpcClientOptions {
 export async function getSchema(baseUrl = endpointState.endpoint, headers?: HeadersInit): Promise<RpcApiSchema> {
 	const response = await fetch(`${baseUrl}${RPC_SCHEMA_PATH}`, {
 		method: "POST",
-		headers: { ...record(customHeaders), ...record(headers) },
+		headers: mergeHeaders(customHeaders, headers),
 	});
 	if (!response.ok) {
 		throw new Error(`Failed to fetch schema: ${response.status} ${response.statusText}`);
@@ -113,13 +113,15 @@ export function addHook(hook: ClientHook) {
 let customHeaders: HeadersInit | null = null;
 
 /**
- * A header set as a plain record. Why: spreading a `Headers` instance or an array of pairs copies nothing usable,
- * so `setHeaders(new Headers(…))` used to send no header at all.
+ * Header sets merged into one record, later sets replacing a name of earlier ones. Why through `Headers`: spreading a
+ * `Headers` instance or an array of pairs copies nothing usable, and spreading records keeps `authorization` and
+ * `Authorization` as two names, which fetch() sends as one header with both values joined. VERIFIED: src/client.test.ts
+ * ("a client's headers win") was answered 401 with `Bearer wrong, Bearer a` before this merge.
  */
-function record(headers: HeadersInit | null | undefined): Record<string, string> {
-	if (!headers) return {};
-	if (typeof (headers as Iterable<unknown>)[Symbol.iterator] === "function") return Object.fromEntries(new Headers(headers));
-	return headers as Record<string, string>;
+function mergeHeaders(...sets: (HeadersInit | null | undefined)[]): Record<string, string> {
+	const merged = new Headers();
+	for (const set of sets) if (set) new Headers(set).forEach((value, name) => merged.set(name, value));
+	return Object.fromEntries(merged);
 }
 
 /**
@@ -167,7 +169,7 @@ async function sendCall(
 ) {
 	const request: RequestInit = {
 		method: "POST",
-		headers: { "Content-Type": "application/json", ...record(customHeaders), ...headers },
+		headers: mergeHeaders({ "Content-Type": "application/json" }, customHeaders, headers),
 		body: DSON.stringify({ className: namespaceName, methodName, args }),
 	};
 	await runClientGuards(namespaceName, methodName, args, request, `RPC call to ${namespaceName}.${methodName}`);
@@ -305,7 +307,7 @@ function buildClient(schema: RpcApiSchema, baseUrl: string, headers: Record<stri
  */
 export async function getRpcClient<T extends Record<string, unknown>>(options?: RpcClientOptions) {
 	const baseUrl = options?.baseUrl ?? endpointState.endpoint;
-	const headers = record(options?.headers);
+	const headers = mergeHeaders(options?.headers);
 	let schema = schemas.get(baseUrl);
 	if (!schema) {
 		schema = getSchema(baseUrl, headers);
@@ -582,7 +584,7 @@ export async function* upload<T = unknown>(
 		try {
 			const headRes = await fetch(
 				`${baseUrl}${RPC_UPLOAD_PATH}/${uploadId}`,
-				{ method: "HEAD", signal: options.signal },
+				{ method: "HEAD", headers: mergeHeaders(customHeaders, options.headers), signal: options.signal },
 			);
 			if (headRes.ok) {
 				offset = Number.parseInt(
@@ -672,18 +674,20 @@ export async function* upload<T = unknown>(
 	// -- Guard hooks --------------------------------------------------
 	const reqInit: RequestInit & { duplex?: string } = {
 		method: "POST",
-		headers: {
-			"Content-Type": "application/octet-stream",
-			"X-Upload-Handler": handlerName,
-			"X-Upload-Id": uploadId,
-			"X-Original-Size": String(totalBytes),
-			"X-Upload-Offset": String(offset),
-			// Percent-encoded: header values are bytes, and a name outside Latin-1 makes fetch() throw.
-			...(options.originalFilename ? { "X-Original-Filename": encodeURIComponent(options.originalFilename) } : {}),
-			...(usedCompression === "gzip" ? { "Content-Encoding": "gzip" } : {}),
-			...record(customHeaders),
-			...options.headers,
-		},
+		headers: mergeHeaders(
+			{
+				"Content-Type": "application/octet-stream",
+				"X-Upload-Handler": handlerName,
+				"X-Upload-Id": uploadId,
+				"X-Original-Size": String(totalBytes),
+				"X-Upload-Offset": String(offset),
+				// Percent-encoded: header values are bytes, and a name outside Latin-1 makes fetch() throw.
+				...(options.originalFilename ? { "X-Original-Filename": encodeURIComponent(options.originalFilename) } : {}),
+				...(usedCompression === "gzip" ? { "Content-Encoding": "gzip" } : {}),
+			},
+			customHeaders,
+			options.headers,
+		),
 		body: requestBody as BodyInit,
 		signal: options.signal,
 	};

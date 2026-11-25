@@ -13,6 +13,8 @@ Credentials for servers that guard their schema.
 
 - The schema request sends the `setHeaders()` set. A host that answered 401 to `/rpc/schema` without credentials could not be used with `getRpcClient()` before.
 - `setHeaders()` with a `Headers` instance or an array of pairs sends those headers. Object spread had copied nothing from them, so calls and uploads went out without them.
+- A header in two sets is sent once, with the later value, whatever the case of its name: `setHeaders(new Headers({ Authorization: "Bearer a" }))` and a client's `{ Authorization: "Bearer b" }` had sent `Bearer a, Bearer b`. The `RequestInit` a client hook sees therefore names its headers in lower case.
+- The resume check of `upload()` with an `uploadId` (`HEAD /rpc/upload/{id}`) sends the `setHeaders()` set and the upload's `headers`. Behind a host that answered 401 without them, a resumed upload had started from byte 0.
 
 ## 4.0.0
 

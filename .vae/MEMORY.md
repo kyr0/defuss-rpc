@@ -15,4 +15,5 @@ Budget 4 KiB (`vae.py doctor --repo .`); entries are injected at session start. 
 - VERIFIED[DSON wire] NDJSON lines are DSON's compact table encoding, not readable JSON BC curl of ChatApi.reply → examples/wire.ndjson
 - VERIFIED[make e2e] needs network: bun add in the consumer and defuss-shadcn 0.9.11 from jsDelivr for docs/ BC failed requests fail scripts/e2e.mjs
 - VERIFIED[astro 7.4.4 `astro dev` outside CI] a fresh project's npm update check writes .astro/settings.json, which restarts the dev server mid-request; tests set ASTRO_DISABLE_UPDATE_CHECK=true BC output/e2e/logs/astro.log "Configuration file updated" + dist/core/dev/update-check.js
-- VERIFIED[make bench in background] ending a turn starts the Stop-hook gate (build, tests, e2e), which skews the bench; run it in the foreground BC var/log/vae/lint.log times inside 2 bench runs 2026-11-23
+- VERIFIED[background bench|publish] ending a turn starts the Stop-hook gate, whose builds race them (skewed bench, empty dist/ in e2e); run them in the foreground BC 2 bench runs 2026-11-23, gate e2e 2026-11-24
+- VERIFIED[npm publish as kyr0] needs 2FA web auth: the agent shell gets EOTP after prepublishOnly; the human publishes in a terminal BC tmp/publish.log 2026-11-24
