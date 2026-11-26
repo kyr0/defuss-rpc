@@ -19,20 +19,10 @@ Wrap: EVERY lead becomes a test | .vae/VERIFY.py rule | one MEMORY line with BC,
 2026-11-01T19:22:54Z s=be7f2ca9 FINDING src/providers/bun.ts:4 B01/S learn=none: one-off edit error
 2026-11-01T19:22:54Z s=be7f2ca9 FINDING README.md:Benchmark B03/B09 learn=none: the bench script records load average in every report
 2026-11-01T19:22:54Z s=be7f2ca9 FINDING src/astro-integration.ts:@example learn=none: doc example; the e2e runs the real config
-2026-11-01T20:13:37Z s=be7f2ca9 FINDING scripts/docs.ts:12 learn=verifier: make lint (oxlint) catches it
-2026-11-01T20:13:37Z s=be7f2ca9 FINDING integrations/astro/ARCH.md:20 B01 learn=verifier: the gate's prose check enforces it
-2026-11-01T20:13:37Z s=be7f2ca9 FINDING integrations/*/package.json:devDependencies learn=verifier: the gate's package check enforces it
 2026-11-01T20:13:37Z s=be7f2ca9 FINDING integrations/vite/example/env.d.ts:3 learn=none: comment text; generated into the README, which the docs check keeps in sync
-2026-11-01T20:13:37Z s=be7f2ca9 FINDING Makefile:setup, integrations/*/package.json peerDependenciesMeta learn=verifier: .vae/checks/policy.py check_integrations keeps vite/astro out of the core and requires each package's lockfile, README, ARCH and example
-2026-11-01T20:38:46Z s=be7f2ca9 FAIL prose,tests.e2e.1
-2026-11-01T20:47:07Z s=be7f2ca9 DONE fp=2ef49e230a8c cov=90.9% paths=ARCH.md,Makefile,README.md,docs/assets/site.css(+7)
-2026-11-01T20:47:07Z s=be7f2ca9 FINDING scripts/e2e.mjs:start astro (ASTRO_DISABLE_UPDATE_CHECK) learn=memory: .vae/MEMORY.md line; the e2e itself fails if the restart returns
 2026-11-01T20:47:07Z s=be7f2ca9 FINDING scripts/e2e.mjs:finally (process cleanup) learn=none: diagnostic behavior of the test harness; no rule kind checks log presence after a failure
-2026-11-01T20:47:07Z s=be7f2ca9 FINDING scripts/e2e.mjs:watch pageerror learn=test: every other page error still fails the e2e
 2026-11-01T20:47:07Z s=be7f2ca9 FINDING scripts/serve.mjs:19 learn=none: comment drift; not mechanically checkable
-2026-11-01T20:47:07Z s=be7f2ca9 FINDING docs/index.html:387,390 T06; README.md Protocol table T06 learn=verifier: the gate's prose check enforces it
 2026-11-01T20:47:07Z s=be7f2ca9 FINDING scripts/docs.ts:highlightLines, codeText learn=none: documentation quality; the gate's docs stage reviews it
-2026-11-01T21:12:03Z s=be7f2ca9 DONE fp=f6165d566e06 cov=90.9% paths=ARCH.md,Makefile,README.md,docs/assets/site.css(+8)
 2026-11-01T21:12:03Z s=be7f2ca9 FINDING README.md:9, docs/index.html hero, package.json description learn=none: marketing claim accuracy; no rule kind can check it
 2026-11-01T21:19:52Z s=be7f2ca9 DONE fp=a2a45653de90 cov=90.9% paths=ARCH.md,Makefile,README.md,docs/assets/site.css(+9)
 2026-11-01T21:19:52Z s=be7f2ca9 FINDING scripts/bench.mjs:rssMiB, sampleRss, table learn=none: benchmark measurement; numbers vary per machine load, so no test may pin them
@@ -106,3 +96,13 @@ Wrap: EVERY lead becomes a test | .vae/VERIFY.py rule | one MEMORY line with BC,
 2026-11-25T06:53:07Z s=dcdb118f FINDING 4.3.1 (committed bab7008): src/upload-state.ts, src/server.ts learn=test: VERIFIED: the regression test failed without the fix and passes.
 2026-11-25T06:53:07Z s=dcdb118f FINDING 4.3.0 (committed): src/client.ts, client tests, examples/client.ts, ARCH.md learn=test: VERIFIED: client.test.ts and client.browser.test.ts pass; the backplane uses it with redirect: error.
 2026-11-25T06:53:07Z s=dcdb118f FINDING package.json 4.4.0 + CHANGELOG + docs/index.html learn=none: VERIFIED: grep finds v4.4.0 three times in docs/index.html.
+2026-11-26T10:47:50Z s=dcdb118f DONE fp=4529c5c5a7ba cov=93.1% paths=ARCH.md,CHANGELOG.md,README.md,bun.lock(+16)
+2026-11-26T10:47:50Z s=dcdb118f FINDING src/call.ts learn=test: VERIFIED: src/call.test.ts 7 pass (module and class calls as plain data with structuredClone and JSON round trips; runs on createRpcServer with Date and bigint 
+2026-11-26T10:47:50Z s=dcdb118f FINDING src/client.ts:sendCall, src/server.ts:handleCall, src/types.d.ts:RpcCallDescriptor learn=test: VERIFIED: the gate's make verify passed: lint, Vitest on Node.js, Chromium and WebKit, the server suites on Bun, coverage and the packed e2e. The existing clien
+2026-11-26T10:47:50Z s=dcdb118f FINDING examples/client.ts#calls, README.md:Calls as data, docs/index.html, scripts/e2e.mjs learn=test: VERIFIED: make docs wrote README.md and docs/index.html after the region lines fit 80 characters; the gate's e2e passed with both.
+2026-11-26T10:47:50Z s=dcdb118f FINDING ARCH.md, CHANGELOG.md, package.json learn=none: VERIFIED: vae.py prose passed in the gate; the claims restate the tests above.
+2026-11-26T10:47:50Z s=dcdb118f FINDING plans/2026-11-26_08-19_typed-call-descriptors.md learn=none: VERIFIED: the milestones' proofs are the tests and the e2e above.
+2026-11-26T10:47:50Z s=dcdb118f FINDING src/client.browser.test.ts, src/client.test.ts, src/express-server.test.ts, src/upload-state.ts, src/upload.test.ts, bun.lock learn=none: VERIFIED: git status --short lists none of them, and git log names 17650b1 and bab7008 as their last commits.
+2026-11-26T10:52:46Z s=dcdb118f DONE fp=cb47e33f8b91 cov=92.9% paths=ARCH.md,CHANGELOG.md,README.md,bun.lock(+16)
+2026-11-26T10:52:46Z s=dcdb118f FINDING src/call.ts:RpcCall, src/call.ts:CallBuilder, src/call.test.ts learn=test: VERIFIED: tsc passes with the new @ts-expect-error for a Date parameter, and a JSON-typed assignment of an add call and of a call that omits an optional paramet
+2026-11-26T10:52:46Z s=dcdb118f FINDING src/client.browser.test.ts, src/client.test.ts, src/express-server.test.ts, src/upload-state.ts, src/upload.test.ts, bun.lock, src/call.test.ts learn=none: VERIFIED: git status --short lists none of them, and git log names 17650b1 and bab7008 as their last commits.
