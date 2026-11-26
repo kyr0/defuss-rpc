@@ -23,7 +23,6 @@ import type {
 	RpcApiClass,
 	RpcApiEntry,
 	RpcApiModule,
-	RpcCallDescriptor,
 	RpcMethodDescriptor,
 	RpcApiSchema,
 	RpcRoute,
@@ -42,6 +41,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createUploadState, fileChunks, openFileChunks, type UploadEvent, type UploadState } from "./upload-state.js";
 import { errorMessage, log } from "./log.js";
+import { parseRpcCall } from "./call.js";
 
 // re-export for type / code safety
 export * from "./types.d.js";
@@ -105,28 +105,6 @@ const json = (status: number, body: unknown): Response =>
 
 const percentOf = (bytes: number, total: number): number =>
 	total > 0 ? Math.min(100, Math.round((bytes / total) * 100)) : 0;
-
-/**
- * Parses an RPC call body. DSON first (the current client), plain JSON second, so clients older than the DSON
- * transport still reach this server. Returns `null` for anything that is not `{ className, methodName, args[] }`.
- */
-function parseRpcCallDescriptor(serialized: string): RpcCallDescriptor | null {
-	let value: unknown;
-	try {
-		value = DSON.parse(serialized);
-	} catch {
-		try {
-			value = JSON.parse(serialized);
-		} catch {
-			return null;
-		}
-	}
-	const call = value as Partial<RpcCallDescriptor> | null;
-	if (!call || typeof call.className !== "string" || typeof call.methodName !== "string" || !Array.isArray(call.args)) {
-		return null;
-	}
-	return call as RpcCallDescriptor;
-}
 
 /** True when the entry is a class constructor (instantiated per call), false for a plain-object module. */
 function isRpcClass(entry: RpcApiEntry): entry is RpcApiClass {
@@ -693,7 +671,8 @@ function buildSchema(state: ServerState): RpcSchemaEntry[] {
 
 /** Dispatches one RPC call body to its namespace entry. */
 async function handleCall(state: ServerState, request: Request): Promise<Response> {
-	const call = parseRpcCallDescriptor(await request.text());
+	// DSON first (the current client), plain JSON second, so clients older than the DSON transport still reach this server.
+	const call = parseRpcCall(await request.text());
 	if (!call) {
 		return json(400, { error: "Invalid RPC call: expected { className, methodName, args: [] } as DSON or JSON" });
 	}

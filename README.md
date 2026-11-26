@@ -252,9 +252,13 @@ import {
   createRpcContext,
   download,
   getRpcClient,
+  parseRpcCall,
+  rpcCalls,
+  sendRpcCall,
   setHeaders,
   uploadComplete,
 } from "defuss-rpc/client";
+import { DSON } from "defuss-dson";
 import type { RpcApi } from "./api.ts";
 
 const baseUrl = process.env.RPC_URL ?? "http://127.0.0.1:63920";
@@ -486,6 +490,32 @@ console.log(answered, ownAnswers); // 1 1
 <!-- /example -->
 
 A failed schema request throws with `status` and `body`, as a failed call does, so a client can tell a missing credential (401) from a missing endpoint (404).
+
+## Calls as data
+
+A scheduler, a queue or a log can keep a call and run it later. `rpcCalls<RpcApi>()` builds the call from the API type without sending it: `calls.MathApi.multiply(6, 7)` for a module, `new calls.GreeterApi().greet("Ada")` for a class. The result is plain data, `{ v, className, methodName, args }`. A wrong argument or an unknown method fails to compile, as it does with the client.
+
+<!-- example: examples/client.ts#calls -->
+```ts
+// A call as data, for a scheduler or a queue to keep: typed by
+// the API, plain JSON in between, sent when it is due.
+const call = rpcCalls<RpcApi>().MathApi.multiply(6, 7);
+console.log(call.className, call.methodName); // MathApi multiply
+const stored = JSON.stringify(call); // what a scheduler keeps
+const due = parseRpcCall(JSON.parse(stored));
+const answer = await sendRpcCall(baseUrl, due!);
+console.log(answer.status, DSON.parse(await answer.text())); // 200 42
+```
+<!-- /example -->
+
+| Function | Does |
+| --- | --- |
+| `rpcCalls<RpcApi>()` | Returns the typed builder. A generator method has no builder, because a stored call expects one answer. |
+| `parseRpcCall(value)` | Reads a stored call, the flat `{ className, methodName, args }` form, or the DSON or JSON text of either. Returns `null` for anything else. |
+| `sendRpcCall(baseUrl, call, init?)` | Sends the call and returns the `Response`. It does not throw for a refusal, so a scheduler can judge the status. Decode a 200 body with `DSON.parse`. |
+| `encodeRpcCall(call)` | Returns the HTTP request, `{ method, path, headers, body }`, for code that sends it another way. |
+
+Keep the call, never the encoded body. `v` versions the stored form, `parseRpcCall` reads every version it ever wrote, and `encodeRpcCall` always writes the current wire, so a call stored today still runs after a wire change.
 
 ## Vite and Astro
 

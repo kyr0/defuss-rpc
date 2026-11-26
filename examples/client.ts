@@ -9,9 +9,13 @@ import {
 	createRpcContext,
 	download,
 	getRpcClient,
+	parseRpcCall,
+	rpcCalls,
+	sendRpcCall,
 	setHeaders,
 	uploadComplete,
 } from "defuss-rpc/client";
+import { DSON } from "defuss-dson";
 import type { RpcApi } from "./api.ts";
 
 const baseUrl = process.env.RPC_URL ?? "http://127.0.0.1:63920";
@@ -37,6 +41,17 @@ console.log(tags.has("dson"), scores.get("ada")); // true 1815
 console.log(big); // 18446744073709551616n
 console.log(bytes instanceof Uint8Array); // true
 // #endregion types
+
+// #region calls
+// A call as data, for a scheduler or a queue to keep: typed by
+// the API, plain JSON in between, sent when it is due.
+const call = rpcCalls<RpcApi>().MathApi.multiply(6, 7);
+console.log(call.className, call.methodName); // MathApi multiply
+const stored = JSON.stringify(call); // what a scheduler keeps
+const due = parseRpcCall(JSON.parse(stored));
+const answer = await sendRpcCall(baseUrl, due!);
+console.log(answer.status, DSON.parse(await answer.text())); // 200 42
+// #endregion calls
 
 // #region upload
 type StoredFile = { id: string; size: number };

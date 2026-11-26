@@ -50,14 +50,15 @@ import { DSON } from "defuss-dson";
 import * as esm from "defuss-rpc/server";
 import { ExpressRpcServer as EsmListener } from "defuss-rpc/express-server";
 import { expressProvider as esmExpress } from "defuss-rpc/providers/express";
+import { encodeRpcCall, rpcCalls, sendRpcCall } from "defuss-rpc/client";
 const require = createRequire(import.meta.url);
 const cjs = require("defuss-rpc/server");
 const { ExpressRpcServer: CjsListener } = require("defuss-rpc/express-server");
 const { expressProvider: cjsExpress } = require("defuss-rpc/providers/express");
 if (esm.createRpcServer === cjs.createRpcServer) throw new Error("expected two module copies");
-const body = (className) => DSON.stringify({ className, methodName: "add", args: [3, 4] });
+const calls = rpcCalls();
 async function call(url, className) {
-	const response = await fetch(url + "/rpc", { method: "POST", headers: { "Content-Type": "application/json" }, body: body(className) });
+	const response = await sendRpcCall(url, calls[className].add(3, 4));
 	return response.status === 200 ? DSON.parse(await response.text()) : response.status;
 }
 const fromCjs = cjs.createRpcServer({ Math: { add: (a, b) => a + b } });
@@ -67,7 +68,7 @@ const [cjsUrl, esmUrl] = await Promise.all(listeners.map(async (listener) => (aw
 const results = [await call(cjsUrl, "Math"), await call(esmUrl, "Math")];
 if (results.join() !== "7,12") throw new Error("served across builds: " + results.join());
 cjs.registerGlobalRpcApi({ Global: { add: (a, b) => a - b } });
-const global = await esm.rpcRoute({ request: new Request("http://localhost/rpc", { method: "POST", body: body("Global") }) });
+const global = await esm.rpcRoute({ request: new Request("http://localhost/rpc", { method: "POST", body: encodeRpcCall(calls.Global.add(3, 4)).body }) });
 if (DSON.parse(await global.text()) !== -1) throw new Error("global server differs between builds");
 await Promise.all(listeners.map((listener) => listener.stop()));
 await Promise.all([fromCjs.close(), fromEsm.close()]);

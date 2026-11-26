@@ -1,5 +1,18 @@
 # Changelog
 
+## 4.5.0
+
+Calls as data: build an RPC call from the API type, keep it, and send it later.
+
+### Added
+
+- `rpcCalls<RpcApi>()` builds typed calls without sending them: `calls.MathApi.add(2, 3)` and `new calls.GreeterApi().greet("Ada")` return `{ v: 1, className, methodName, args }`. A wrong argument, an unknown method or a generator method fails to compile.
+- `parseRpcCall(value)` reads a stored call, the flat `{ className, methodName, args }` form, and the DSON or JSON text of either. `encodeRpcCall(call)` returns the HTTP request. `sendRpcCall(baseUrl, call, init?)` sends it and returns the `Response` without throwing for a refusal.
+
+### Changed
+
+- The client and the server encode and parse calls through these functions. The wire format is unchanged.
+
 ## 4.4.0
 
 A fresh resumable upload no longer shows up as a failed request.

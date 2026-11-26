@@ -9,12 +9,13 @@
 import { DSON } from "defuss-dson";
 import type { ClientHook, DsonStreamFrame, RpcApiClass, RpcApiSchema } from "./types.d.js";
 import { log } from "./log.js";
+import { encodeRpcCall } from "./call.js";
 
 // re-export for type / code safety
 export * from "./types.d.js";
+export { encodeRpcCall, parseRpcCall, rpcCalls, sendRpcCall, type RpcCall, type RpcCalls } from "./call.js";
 
 /** Client-side endpoint paths; they mirror the server's `RPC_*` constants, which the client must not import. */
-const RPC_PATH = "/rpc" as const;
 const RPC_SCHEMA_PATH = "/rpc/schema" as const;
 const RPC_UPLOAD_PATH = "/rpc/upload" as const;
 const RPC_DOWNLOAD_PATH = "/rpc/download" as const;
@@ -223,13 +224,14 @@ async function sendCall(
 	baseUrl: string,
 	headers: Record<string, string>,
 ) {
+	const encoded = encodeRpcCall({ v: 1, className: namespaceName, methodName, args });
 	const request: RequestInit = {
-		method: "POST",
-		headers: mergeHeaders({ "Content-Type": "application/json" }, state.headers, headers),
-		body: DSON.stringify({ className: namespaceName, methodName, args }),
+		method: encoded.method,
+		headers: mergeHeaders(encoded.headers, state.headers, headers),
+		body: encoded.body,
 	};
 	await runClientGuards(state.hooks, namespaceName, methodName, args, request, `RPC call to ${namespaceName}.${methodName}`);
-	const response = await send(state, `${baseUrl}${RPC_PATH}`, request);
+	const response = await send(state, `${baseUrl}${encoded.path}`, request);
 	await runClientHooks(state.hooks, "response", namespaceName, methodName, args, request, response);
 	if (!response.ok) {
 		throw Object.assign(new Error(`RPC call failed: ${response.status} ${response.statusText}`), {

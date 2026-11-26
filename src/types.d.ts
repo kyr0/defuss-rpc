@@ -272,7 +272,9 @@ export interface RpcServer {
 export type RpcRoute = (context: { request: Request }) => Promise<Response>;
 
 /**
- * Wire format of a single RPC call sent from client to server as the POST body of `/rpc`.
+ * Wire format of a single RPC call sent from client to server as the POST body of `/rpc`, DSON-encoded.
+ * `encodeRpcCall` and `parseRpcCall` (src/call.ts) are the only code that writes and reads it; to keep or forward a
+ * call, use `RpcCall` from `rpcCalls`.
  */
 export interface RpcCallDescriptor {
 	/**
@@ -289,7 +291,7 @@ export interface RpcCallDescriptor {
 	className: string;
 	/** The method or function name to invoke on the namespace. */
 	methodName: string;
-	/** Positional argument list, serialized as a JSON array. */
+	/** Positional argument list, encoded with DSON. */
 	args: unknown[];
 }
 
