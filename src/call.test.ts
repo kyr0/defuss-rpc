@@ -45,6 +45,16 @@ describe("rpcCalls", () => {
 		// @ts-expect-error a class namespace is constructed first, as with the client
 		calls.TestUserApi.getUser("7");
 		expect(calls.TestMathModule.multiply(2, 4).args).toEqual([2, 4]);
+		// The parameter types stay on the call, so a store that takes only JSON rejects arguments JSON would change.
+		type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+		const stored: { args: Json[] } = calls.TestMathModule.add(1, 2);
+		// An omitted optional parameter is no `undefined` in the stored arguments.
+		const optional: { args: Json[] } = rpcCalls<{ Jobs: { roll(team?: string): Promise<void> } }>().Jobs.roll();
+		expect(optional.args).toEqual([]);
+		const dated = rpcCalls<{ Agenda: { at(when: Date): Promise<void> } }>().Agenda.at(new Date(0));
+		// @ts-expect-error a Date argument is no JSON
+		const lossy: { args: Json[] } = dated;
+		expect([stored.args, lossy.args.length]).toEqual([[1, 2], 1]);
 	});
 
 	it("runs on a real server through encodeRpcCall, DSON values included", async () => {

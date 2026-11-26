@@ -16,8 +16,10 @@ import type { RpcFetch } from "./client.js";
 /** The call path on the server, relative to the client's `baseUrl`. */
 const CALL_PATH = "/rpc" as const;
 
-/** A call as data: what a scheduler, a queue or a log keeps. Plain JSON when its arguments are JSON. */
-export interface RpcCall {
+/** A call as data: what a scheduler, a queue or a log keeps. Plain JSON when its arguments are JSON. `A` is the
+ * method's parameter list when `rpcCalls` built the call, so a store that takes only JSON rejects, at compile time, a
+ * call whose arguments JSON would change. */
+export interface RpcCall<A extends unknown[] = unknown[]> {
 	/** The stored form's version. */
 	v: 1;
 	/** The registered namespace: a class name or a module name. */
@@ -25,15 +27,17 @@ export interface RpcCall {
 	/** The method or function to call on it. */
 	methodName: string;
 	/** Positional arguments. */
-	args: unknown[];
+	args: A;
 }
 
 type Fn = (...args: any[]) => unknown;
-/** A method's builder. A generator streams NDJSON frames, which a stored call has no single answer for, so it is never. */
+/** A method's builder: its arguments are checked against the method's parameters, and the call keeps the types of
+ * the arguments given, so an omitted optional parameter adds no `undefined`. A generator streams NDJSON frames, which a
+ * stored call has no single answer for, so it is never. */
 type CallBuilder<F> = F extends (...args: infer A) => infer R
 	? R extends AsyncGenerator | Generator
 		? never
-		: (...args: A) => RpcCall
+		: <P extends A>(...args: P) => RpcCall<P>
 	: never;
 type Methods<O> = { [K in keyof O as O[K] extends Fn ? K : never]: CallBuilder<O[K]> };
 

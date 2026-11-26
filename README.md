@@ -510,7 +510,7 @@ console.log(answer.status, DSON.parse(await answer.text())); // 200 42
 
 | Function | Does |
 | --- | --- |
-| `rpcCalls<RpcApi>()` | Returns the typed builder. A generator method has no builder, because a stored call expects one answer. |
+| `rpcCalls<RpcApi>()` | Returns the typed builder. Each call keeps its method's parameter types, so a store that takes only JSON rejects a `Date` argument at compile time. A generator method has no builder, because a stored call expects one answer. |
 | `parseRpcCall(value)` | Reads a stored call, the flat `{ className, methodName, args }` form, or the DSON or JSON text of either. Returns `null` for anything else. |
 | `sendRpcCall(baseUrl, call, init?)` | Sends the call and returns the `Response`. It does not throw for a refusal, so a scheduler can judge the status. Decode a 200 body with `DSON.parse`. |
 | `encodeRpcCall(call)` | Returns the HTTP request, `{ method, path, headers, body }`, for code that sends it another way. |
